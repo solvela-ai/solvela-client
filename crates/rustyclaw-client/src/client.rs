@@ -147,7 +147,7 @@ impl RustyClawClient {
 
             loop {
                 match es.next().await {
-                    Some(Ok(Event::Open)) => {},
+                    Some(Ok(Event::Open)) => {}
                     Some(Ok(Event::Message(msg))) => {
                         let data = msg.data.trim();
                         if data == "[DONE]" {

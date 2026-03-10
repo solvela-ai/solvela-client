@@ -110,6 +110,22 @@ impl Wallet {
         self.keypair.sign_message(message)
     }
 
+    /// Return the raw 64-byte keypair (secret || public) for serialization.
+    ///
+    /// The caller is responsible for zeroizing the returned bytes when done.
+    #[must_use]
+    pub fn to_keypair_bytes(&self) -> [u8; 64] {
+        self.keypair.to_bytes()
+    }
+
+    /// Return the keypair as a base58-encoded string.
+    ///
+    /// The caller is responsible for zeroizing the returned string when done.
+    #[must_use]
+    pub fn to_keypair_b58(&self) -> String {
+        bs58::encode(self.keypair.to_bytes()).into_string()
+    }
+
     /// Access the inner keypair for transaction signing.
     #[allow(dead_code)]
     pub(crate) fn keypair(&self) -> &Keypair {
