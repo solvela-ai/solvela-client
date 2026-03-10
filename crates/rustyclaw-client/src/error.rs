@@ -29,7 +29,7 @@ pub enum SignerError {
     TransactionBuild(String),
 }
 
-/// Top-level errors from the RustyClawClient.
+/// Top-level errors from the `RustyClawClient`.
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error("wallet error: {0}")]

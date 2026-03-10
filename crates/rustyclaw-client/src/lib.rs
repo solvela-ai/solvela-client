@@ -1,7 +1,8 @@
+pub mod client;
 pub mod config;
 pub mod error;
-pub mod wallet;
 pub mod signer;
-pub mod client;
+pub mod wallet;
 
-pub use error::{ClientError, WalletError, SignerError};
+pub use config::{ClientBuilder, ClientConfig};
+pub use error::{ClientError, SignerError, WalletError};
