@@ -6,3 +6,4 @@ pub mod wallet;
 
 pub use config::{ClientBuilder, ClientConfig};
 pub use error::{ClientError, SignerError, WalletError};
+pub use wallet::Wallet;
