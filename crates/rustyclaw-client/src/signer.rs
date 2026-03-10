@@ -29,10 +29,7 @@ fn get_associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
 }
 
 /// Fetch the latest blockhash from a Solana RPC endpoint via JSON-RPC.
-async fn get_latest_blockhash(
-    rpc_url: &str,
-    http: &reqwest::Client,
-) -> Result<Hash, SignerError> {
+async fn get_latest_blockhash(rpc_url: &str, http: &reqwest::Client) -> Result<Hash, SignerError> {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,

@@ -31,8 +31,8 @@ impl Wallet {
         let phrase = mnemonic.to_string();
         let seed = mnemonic.to_seed("");
         let kp_bytes = keypair_bytes_from_seed(&seed);
-        let keypair =
-            Keypair::try_from(kp_bytes.as_slice()).expect("keypair from valid seed should not fail");
+        let keypair = Keypair::try_from(kp_bytes.as_slice())
+            .expect("keypair from valid seed should not fail");
         (Self { keypair }, phrase)
     }
 
@@ -137,7 +137,10 @@ mod tests {
     fn test_wallet_create_returns_valid_wallet_and_mnemonic() {
         let (wallet, mnemonic) = Wallet::create();
         let word_count = mnemonic.split_whitespace().count();
-        assert!(word_count == 12 || word_count == 24, "got {word_count} words");
+        assert!(
+            word_count == 12 || word_count == 24,
+            "got {word_count} words"
+        );
         let addr = wallet.address();
         assert!(!addr.is_empty());
         assert!(bs58::decode(&addr).into_vec().is_ok());
@@ -154,7 +157,10 @@ mod tests {
     fn test_wallet_from_mnemonic_invalid() {
         let result = Wallet::from_mnemonic("invalid mnemonic phrase");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), WalletError::InvalidMnemonic(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            WalletError::InvalidMnemonic(_)
+        ));
     }
 
     #[test]
@@ -169,7 +175,10 @@ mod tests {
     fn test_wallet_from_keypair_b58_invalid() {
         let result = Wallet::from_keypair_b58("not-valid-base58!!!");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), WalletError::InvalidKeypair(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            WalletError::InvalidKeypair(_)
+        ));
     }
 
     #[test]
