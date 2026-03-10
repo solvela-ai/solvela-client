@@ -23,6 +23,7 @@ spl-associated-token-account = "5"
 
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+reqwest-eventsource = "0.6"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
