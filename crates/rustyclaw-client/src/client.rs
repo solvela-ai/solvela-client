@@ -1,10 +1,12 @@
+use futures::stream::{self, Stream, StreamExt};
 use reqwest::StatusCode;
+use reqwest_eventsource::RequestBuilderExt;
 use solana_sdk::pubkey::Pubkey;
 use tracing::debug;
 
 use rustyclaw_protocol::{
-    ChatMessage, ChatRequest, ChatResponse, CostBreakdown, ModelInfo, PaymentRequired, Role,
-    USDC_MINT,
+    ChatChunk, ChatMessage, ChatRequest, ChatResponse, CostBreakdown, ModelInfo, PaymentRequired,
+    Role, USDC_MINT,
 };
 
 use crate::config::ClientConfig;
@@ -78,6 +80,99 @@ impl RustyClawClient {
                 })
             }
         }
+    }
+
+    /// Send a streaming chat completion request with transparent 402 payment handling.
+    ///
+    /// Returns a `Stream` of `ChatChunk` items parsed from server-sent events.
+    /// The stream terminates when the server sends `[DONE]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ClientError::Gateway` for non-200/402 responses,
+    /// `ClientError::Signing` if payment signing fails, or
+    /// `ClientError::StreamError` if SSE parsing fails.
+    pub async fn chat_stream(
+        &self,
+        req: ChatRequest,
+    ) -> Result<impl Stream<Item = Result<ChatChunk, ClientError>>, ClientError> {
+        let url = format!("{}/v1/chat/completions", self.config.gateway_url);
+
+        // Probe with stream: false to check payment status
+        let mut probe_req = req.clone();
+        probe_req.stream = false;
+
+        let probe_resp = self.http.post(&url).json(&probe_req).send().await?;
+        let status = probe_resp.status();
+
+        // Build the streaming request based on probe result
+        let mut stream_req = req;
+        stream_req.stream = true;
+
+        let request_builder = match status {
+            StatusCode::OK => {
+                debug!("gateway returned 200 directly (free/cached model), opening SSE stream");
+                // Discard probe body — we only needed the status
+                drop(probe_resp);
+                self.http.post(&url).json(&stream_req)
+            }
+            StatusCode::PAYMENT_REQUIRED => {
+                debug!("gateway returned 402, signing payment for stream");
+                let body = probe_resp.text().await?;
+                let payment_required: PaymentRequired = serde_json::from_str(&body)
+                    .map_err(|e| ClientError::ParseError(format!("invalid 402 body: {e}")))?;
+
+                let payment_header = self.sign_payment_for_402(&payment_required).await?;
+
+                self.http
+                    .post(&url)
+                    .header("PAYMENT-SIGNATURE", &payment_header)
+                    .json(&stream_req)
+            }
+            _ => {
+                let body = probe_resp.text().await.unwrap_or_default();
+                return Err(ClientError::Gateway {
+                    status: status.as_u16(),
+                    message: body,
+                });
+            }
+        };
+
+        let es = request_builder
+            .eventsource()
+            .map_err(|e| ClientError::StreamError(format!("failed to create SSE stream: {e}")))?;
+
+        let stream = stream::unfold(es, |mut es| async move {
+            use reqwest_eventsource::Event;
+
+            loop {
+                match es.next().await {
+                    Some(Ok(Event::Open)) => {},
+                    Some(Ok(Event::Message(msg))) => {
+                        let data = msg.data.trim();
+                        if data == "[DONE]" {
+                            es.close();
+                            return None;
+                        }
+                        let result: Result<ChatChunk, ClientError> = serde_json::from_str(data)
+                            .map_err(|e| {
+                                ClientError::StreamError(format!("failed to parse SSE chunk: {e}"))
+                            });
+                        return Some((result, es));
+                    }
+                    Some(Err(e)) => {
+                        es.close();
+                        return Some((
+                            Err(ClientError::StreamError(format!("SSE error: {e}"))),
+                            es,
+                        ));
+                    }
+                    None => return None,
+                }
+            }
+        });
+
+        Ok(stream)
     }
 
     /// Fetch the list of available models from the gateway.
@@ -312,9 +407,7 @@ impl RustyClawClient {
             return Ok(0.0);
         }
 
-        let ui_amount = json["result"]["value"]["uiAmount"]
-            .as_f64()
-            .unwrap_or(0.0);
+        let ui_amount = json["result"]["value"]["uiAmount"].as_f64().unwrap_or(0.0);
 
         Ok(ui_amount)
     }
@@ -348,6 +441,7 @@ impl std::fmt::Debug for RustyClawClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
     use rustyclaw_protocol::*;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -645,11 +739,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_usdc_balance_of_invalid_address() {
-        let client = RustyClawClient::new(
-            test_wallet(),
-            ClientConfig::default(),
-        )
-        .unwrap();
+        let client = RustyClawClient::new(test_wallet(), ClientConfig::default()).unwrap();
 
         let result = client.usdc_balance_of("not-a-valid-pubkey").await;
         assert!(result.is_err());
@@ -679,5 +769,78 @@ mod tests {
         let cost = client.estimate_cost("openai/gpt-4o").await.unwrap();
         assert_eq!(cost.total, "0.002625");
         assert_eq!(cost.currency, "USDC");
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_returns_chunks_for_free_model() {
+        let mock_server = MockServer::start().await;
+
+        let sse_body = "\
+data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1234,\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n\
+data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1234,\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n\
+data: [DONE]\n\n";
+
+        // Both probe and streaming requests return 200 with SSE content-type.
+        // The probe only checks the status code (200 = free model), so the
+        // body/content-type is irrelevant. The streaming request needs SSE.
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&mock_server)
+            .await;
+
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        let stream = client.chat_stream(sample_chat_request()).await.unwrap();
+        let chunks: Vec<ChatChunk> = stream
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].choices[0].delta.content.as_deref(), Some("Hello"));
+        assert_eq!(
+            chunks[1].choices[0].delta.content.as_deref(),
+            Some(" world")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_handles_402_then_fails_signing() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(402).set_body_json(sample_payment_required()))
+            .mount(&mock_server)
+            .await;
+
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                rpc_url: "http://127.0.0.1:1".to_string(),
+                timeout: std::time::Duration::from_secs(5),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        let result = client.chat_stream(sample_chat_request()).await;
+        assert!(result.is_err());
+        match result {
+            Err(ClientError::Signing(_)) => {} // expected
+            Err(other) => panic!("expected Signing error, got {other:?}"),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
     }
 }
