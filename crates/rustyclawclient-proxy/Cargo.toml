@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 rustyclaw-client = { path = "../rustyclaw-client" }
+rustyclawclient-cli-args = { path = "../rustyclawclient-cli-args" }
 rustyclaw-protocol = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
@@ -26,7 +27,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-dirs-next = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"
