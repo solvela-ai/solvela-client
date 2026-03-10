@@ -111,6 +111,11 @@ impl fmt::Debug for Wallet {
 
 impl Drop for Wallet {
     fn drop(&mut self) {
+        // Best-effort zeroization: solana_sdk::Keypair does not expose its
+        // internal bytes by mutable reference, so we cannot guarantee the
+        // secret key material is zeroed in-place. This zeroizes a copy of
+        // the bytes on the stack. For stronger guarantees, store raw key
+        // bytes in a Zeroizing<[u8; 64]> and reconstruct Keypair on demand.
         let mut bytes = self.keypair.to_bytes();
         bytes.zeroize();
     }

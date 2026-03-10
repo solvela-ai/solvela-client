@@ -8,6 +8,7 @@ pub struct ClientConfig {
     /// Solana RPC URL.
     pub rpc_url: String,
     /// Prefer escrow payment scheme over exact (safer for agents).
+    /// Currently defaults to `false` because escrow signing is not yet implemented.
     pub prefer_escrow: bool,
     /// Request timeout.
     pub timeout: Duration,
@@ -18,7 +19,7 @@ impl Default for ClientConfig {
         Self {
             gateway_url: "http://localhost:8402".to_string(),
             rpc_url: "https://api.mainnet-beta.solana.com".to_string(),
-            prefer_escrow: true,
+            prefer_escrow: false,
             timeout: Duration::from_secs(180),
         }
     }
@@ -96,7 +97,7 @@ mod tests {
         let config = ClientConfig::default();
         assert_eq!(config.gateway_url, "http://localhost:8402");
         assert_eq!(config.rpc_url, "https://api.mainnet-beta.solana.com");
-        assert!(config.prefer_escrow);
+        assert!(!config.prefer_escrow);
         assert_eq!(config.timeout, Duration::from_secs(180));
     }
 
@@ -104,7 +105,7 @@ mod tests {
     fn test_builder_defaults() {
         let config = ClientBuilder::new().build_config();
         assert_eq!(config.gateway_url, "http://localhost:8402");
-        assert!(config.prefer_escrow);
+        assert!(!config.prefer_escrow);
     }
 
     #[test]

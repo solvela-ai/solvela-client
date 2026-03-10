@@ -64,6 +64,9 @@ pub enum ClientError {
 
     #[error("failed to parse response: {0}")]
     ParseError(String),
+
+    #[error("client configuration error: {0}")]
+    Config(String),
 }
 
 #[cfg(test)]

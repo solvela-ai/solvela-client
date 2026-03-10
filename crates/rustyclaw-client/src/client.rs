@@ -23,21 +23,19 @@ pub struct RustyClawClient {
 impl RustyClawClient {
     /// Create a new client with the given wallet and configuration.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the HTTP client cannot be built (should never happen with
-    /// valid timeout values).
-    #[must_use]
-    pub fn new(wallet: Wallet, config: ClientConfig) -> Self {
+    /// Returns `ClientError::Config` if the HTTP client cannot be built.
+    pub fn new(wallet: Wallet, config: ClientConfig) -> Result<Self, ClientError> {
         let http = reqwest::Client::builder()
             .timeout(config.timeout)
             .build()
-            .expect("HTTP client should build");
-        Self {
+            .map_err(|e| ClientError::Config(format!("failed to build HTTP client: {e}")))?;
+        Ok(Self {
             wallet,
             config,
             http,
-        }
+        })
     }
 
     /// Send a chat completion request with transparent 402 payment handling.
@@ -102,21 +100,19 @@ impl RustyClawClient {
         serde_json::from_str(&body).map_err(|e| ClientError::ParseError(e.to_string()))
     }
 
-    /// Estimate the cost of a chat request by sending a probe.
+    /// Estimate the cost of a chat request by sending a minimal probe.
     ///
-    /// Returns the `CostBreakdown` from the 402 response, or a zero-cost
-    /// breakdown if the model is free (200 response).
+    /// Sends a single-message request to trigger a 402 response and extracts
+    /// the cost breakdown. The estimate reflects the gateway's per-model pricing,
+    /// not a specific token count.
+    ///
+    /// Returns a zero-cost breakdown if the model is free (200 response).
     ///
     /// # Errors
     ///
     /// Returns `ClientError::Gateway` for unexpected status codes or
     /// `ClientError::ParseError` if the 402 body is malformed.
-    pub async fn estimate_cost(
-        &self,
-        model: &str,
-        _input_tokens: u32,
-        _output_tokens: u32,
-    ) -> Result<CostBreakdown, ClientError> {
+    pub async fn estimate_cost(&self, model: &str) -> Result<CostBreakdown, ClientError> {
         let url = format!("{}/v1/chat/completions", self.config.gateway_url);
 
         let probe = ChatRequest {
@@ -212,21 +208,20 @@ impl RustyClawClient {
         }
     }
 
+    /// Pick the best compatible payment scheme from the 402 accepts list.
+    ///
+    /// Currently only "exact" (direct transfer) is supported. Escrow signing
+    /// is not yet implemented — escrow schemes are filtered out even when
+    /// `prefer_escrow` is true. Once `sign_escrow_payment` is added, this
+    /// method should respect `config.prefer_escrow` ordering.
     fn pick_scheme<'a>(
         &self,
         accepts: &'a [rustyclaw_protocol::PaymentAccept],
     ) -> Option<&'a rustyclaw_protocol::PaymentAccept> {
-        if self.config.prefer_escrow {
-            accepts
-                .iter()
-                .find(|a| a.scheme == "escrow")
-                .or_else(|| accepts.iter().find(|a| a.scheme == "exact"))
-        } else {
-            accepts
-                .iter()
-                .find(|a| a.scheme == "exact")
-                .or_else(|| accepts.iter().find(|a| a.scheme == "escrow"))
-        }
+        // TODO: respect self.config.prefer_escrow once escrow signing is implemented
+        let _ = self.config.prefer_escrow;
+        // Only exact scheme is implemented; escrow signing is not yet available
+        accepts.iter().find(|a| a.scheme == "exact")
     }
 }
 
@@ -339,7 +334,8 @@ mod tests {
                 gateway_url: mock_server.uri(),
                 ..ClientConfig::default()
             },
-        );
+        )
+        .unwrap();
 
         let resp = client.chat(sample_chat_request()).await.unwrap();
         assert_eq!(resp.choices[0].message.content, "Hello! How can I help?");
@@ -363,7 +359,8 @@ mod tests {
                 timeout: std::time::Duration::from_secs(5),
                 ..ClientConfig::default()
             },
-        );
+        )
+        .unwrap();
 
         let result = client.chat(sample_chat_request()).await;
         assert!(result.is_err());
@@ -389,7 +386,8 @@ mod tests {
                 gateway_url: mock_server.uri(),
                 ..ClientConfig::default()
             },
-        );
+        )
+        .unwrap();
 
         let result = client.chat(sample_chat_request()).await;
         match result.unwrap_err() {
@@ -432,7 +430,8 @@ mod tests {
                 gateway_url: mock_server.uri(),
                 ..ClientConfig::default()
             },
-        );
+        )
+        .unwrap();
 
         let result = client.models().await.unwrap();
         assert_eq!(result.len(), 1);
@@ -456,12 +455,10 @@ mod tests {
                 gateway_url: mock_server.uri(),
                 ..ClientConfig::default()
             },
-        );
+        )
+        .unwrap();
 
-        let cost = client
-            .estimate_cost("openai/gpt-4o", 1000, 500)
-            .await
-            .unwrap();
+        let cost = client.estimate_cost("openai/gpt-4o").await.unwrap();
         assert_eq!(cost.total, "0.002625");
         assert_eq!(cost.currency, "USDC");
     }

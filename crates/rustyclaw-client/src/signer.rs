@@ -68,7 +68,7 @@ async fn get_latest_blockhash(rpc_url: &str, http: &reqwest::Client) -> Result<H
 /// Returns `SignerError::TransactionBuild` if the recipient address is invalid
 /// or the SPL instruction cannot be built, and `SignerError::RpcError` if the
 /// blockhash fetch fails.
-pub async fn sign_exact_payment(
+pub(crate) async fn sign_exact_payment(
     wallet: &Wallet,
     rpc_url: &str,
     http: &reqwest::Client,
@@ -111,7 +111,7 @@ pub async fn sign_exact_payment(
 
 /// Build the `PaymentPayload` struct for the PAYMENT-SIGNATURE header.
 #[must_use]
-pub fn build_payment_payload(
+pub(crate) fn build_payment_payload(
     resource: &Resource,
     accept: &PaymentAccept,
     signed_tx_b64: &str,
@@ -133,7 +133,7 @@ pub fn build_payment_payload(
 /// Panics if `PaymentPayload` cannot be serialized to JSON, which should
 /// never occur since all fields implement `Serialize`.
 #[must_use]
-pub fn encode_payment_header(payload: &PaymentPayload) -> String {
+pub(crate) fn encode_payment_header(payload: &PaymentPayload) -> String {
     let json = serde_json::to_string(payload).expect("PaymentPayload should always serialize");
     base64::engine::general_purpose::STANDARD.encode(json.as_bytes())
 }

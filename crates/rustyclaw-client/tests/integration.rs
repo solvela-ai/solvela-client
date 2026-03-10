@@ -102,7 +102,7 @@ async fn test_full_free_model_flow() {
         .mount(&mock_server)
         .await;
 
-    let client = RustyClawClient::new(test_wallet(), test_config(&mock_server.uri()));
+    let client = RustyClawClient::new(test_wallet(), test_config(&mock_server.uri())).unwrap();
     let resp = client.chat(sample_chat_request()).await.unwrap();
 
     assert_eq!(resp.id, "chatcmpl-integration");
@@ -133,7 +133,8 @@ async fn test_402_flow_fails_without_rpc() {
             timeout: std::time::Duration::from_secs(5),
             ..ClientConfig::default()
         },
-    );
+    )
+    .unwrap();
 
     let result = client.chat(sample_chat_request()).await;
     assert!(result.is_err());
@@ -165,7 +166,7 @@ async fn test_no_compatible_scheme_error() {
         .mount(&mock_server)
         .await;
 
-    let client = RustyClawClient::new(test_wallet(), test_config(&mock_server.uri()));
+    let client = RustyClawClient::new(test_wallet(), test_config(&mock_server.uri())).unwrap();
     let result = client.chat(sample_chat_request()).await;
 
     assert!(result.is_err());
@@ -186,7 +187,7 @@ async fn test_gateway_error_propagation() {
         .mount(&mock_server)
         .await;
 
-    let client = RustyClawClient::new(test_wallet(), test_config(&mock_server.uri()));
+    let client = RustyClawClient::new(test_wallet(), test_config(&mock_server.uri())).unwrap();
     let result = client.chat(sample_chat_request()).await;
 
     match result.unwrap_err() {
@@ -209,11 +210,8 @@ async fn test_estimate_cost_returns_cost_breakdown() {
         .mount(&mock_server)
         .await;
 
-    let client = RustyClawClient::new(test_wallet(), test_config(&mock_server.uri()));
-    let cost = client
-        .estimate_cost("openai/gpt-4o", 1000, 500)
-        .await
-        .unwrap();
+    let client = RustyClawClient::new(test_wallet(), test_config(&mock_server.uri())).unwrap();
+    let cost = client.estimate_cost("openai/gpt-4o").await.unwrap();
 
     assert_eq!(cost.provider_cost, "0.002500");
     assert_eq!(cost.platform_fee, "0.000125");
@@ -268,7 +266,7 @@ async fn test_models_endpoint() {
         .mount(&mock_server)
         .await;
 
-    let client = RustyClawClient::new(test_wallet(), test_config(&mock_server.uri()));
+    let client = RustyClawClient::new(test_wallet(), test_config(&mock_server.uri())).unwrap();
     let result = client.models().await.unwrap();
 
     assert_eq!(result.len(), 2);
@@ -282,7 +280,7 @@ async fn test_models_endpoint() {
 async fn test_wallet_debug_in_client_debug() {
     let wallet = test_wallet();
     let addr = wallet.address();
-    let client = RustyClawClient::new(wallet, ClientConfig::default());
+    let client = RustyClawClient::new(wallet, ClientConfig::default()).unwrap();
 
     let debug_output = format!("{client:?}");
 
