@@ -166,10 +166,30 @@ impl RustyClawClient {
             .pick_scheme(&payment_required.accepts)
             .ok_or(ClientError::NoCompatibleScheme)?;
 
+        // Security: validate recipient matches expected (prevents payment redirect)
+        if let Some(ref expected) = self.config.expected_recipient {
+            if accept.pay_to != *expected {
+                return Err(ClientError::RecipientMismatch {
+                    expected: expected.clone(),
+                    actual: accept.pay_to.clone(),
+                });
+            }
+        }
+
         let amount_atomic: u64 = accept
             .amount
             .parse()
             .map_err(|e| ClientError::ParseError(format!("invalid amount: {e}")))?;
+
+        // Security: validate amount does not exceed maximum (prevents overcharge)
+        if let Some(max) = self.config.max_payment_amount {
+            if amount_atomic > max {
+                return Err(ClientError::AmountExceedsMax {
+                    amount: amount_atomic,
+                    max,
+                });
+            }
+        }
 
         let signed_tx = signer::sign_exact_payment(
             &self.wallet,

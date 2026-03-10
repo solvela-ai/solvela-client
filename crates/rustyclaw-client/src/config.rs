@@ -12,6 +12,14 @@ pub struct ClientConfig {
     pub prefer_escrow: bool,
     /// Request timeout.
     pub timeout: Duration,
+    /// Optional expected recipient wallet address. If set, the client will
+    /// reject 402 responses that specify a different `pay_to` address,
+    /// preventing payment redirect attacks by malicious gateways.
+    pub expected_recipient: Option<String>,
+    /// Maximum payment amount in atomic USDC units. If set, the client will
+    /// reject 402 responses that request more than this amount, preventing
+    /// overcharge attacks by malicious gateways.
+    pub max_payment_amount: Option<u64>,
 }
 
 impl Default for ClientConfig {
@@ -21,6 +29,8 @@ impl Default for ClientConfig {
             rpc_url: "https://api.mainnet-beta.solana.com".to_string(),
             prefer_escrow: false,
             timeout: Duration::from_secs(180),
+            expected_recipient: None,
+            max_payment_amount: None,
         }
     }
 }
@@ -32,6 +42,8 @@ pub struct ClientBuilder {
     rpc_url: Option<String>,
     prefer_escrow: Option<bool>,
     timeout: Option<Duration>,
+    expected_recipient: Option<String>,
+    max_payment_amount: Option<u64>,
 }
 
 impl ClientBuilder {
@@ -42,6 +54,8 @@ impl ClientBuilder {
             rpc_url: None,
             prefer_escrow: None,
             timeout: None,
+            expected_recipient: None,
+            max_payment_amount: None,
         }
     }
 
@@ -69,6 +83,18 @@ impl ClientBuilder {
         self
     }
 
+    #[must_use]
+    pub fn expected_recipient(mut self, recipient: &str) -> Self {
+        self.expected_recipient = Some(recipient.to_string());
+        self
+    }
+
+    #[must_use]
+    pub fn max_payment_amount(mut self, max: u64) -> Self {
+        self.max_payment_amount = Some(max);
+        self
+    }
+
     /// Build a `ClientConfig` from the builder state, using defaults for unset values.
     #[must_use]
     pub fn build_config(self) -> ClientConfig {
@@ -78,6 +104,8 @@ impl ClientBuilder {
             rpc_url: self.rpc_url.unwrap_or(defaults.rpc_url),
             prefer_escrow: self.prefer_escrow.unwrap_or(defaults.prefer_escrow),
             timeout: self.timeout.unwrap_or(defaults.timeout),
+            expected_recipient: self.expected_recipient.or(defaults.expected_recipient),
+            max_payment_amount: self.max_payment_amount.or(defaults.max_payment_amount),
         }
     }
 }
@@ -129,5 +157,31 @@ mod tests {
             .gateway_url("https://my-gateway.fly.dev/")
             .build_config();
         assert_eq!(config.gateway_url, "https://my-gateway.fly.dev");
+    }
+
+    #[test]
+    fn test_builder_expected_recipient() {
+        let config = ClientBuilder::new()
+            .expected_recipient("RecipientWalletAddress")
+            .build_config();
+        assert_eq!(
+            config.expected_recipient.as_deref(),
+            Some("RecipientWalletAddress")
+        );
+    }
+
+    #[test]
+    fn test_builder_max_payment_amount() {
+        let config = ClientBuilder::new()
+            .max_payment_amount(100_000)
+            .build_config();
+        assert_eq!(config.max_payment_amount, Some(100_000));
+    }
+
+    #[test]
+    fn test_default_config_security_fields_none() {
+        let config = ClientConfig::default();
+        assert!(config.expected_recipient.is_none());
+        assert!(config.max_payment_amount.is_none());
     }
 }

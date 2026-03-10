@@ -65,6 +65,12 @@ pub enum ClientError {
     #[error("failed to parse response: {0}")]
     ParseError(String),
 
+    #[error("payment recipient mismatch: expected {expected}, got {actual}")]
+    RecipientMismatch { expected: String, actual: String },
+
+    #[error("payment amount {amount} exceeds maximum allowed {max}")]
+    AmountExceedsMax { amount: u64, max: u64 },
+
     #[error("client configuration error: {0}")]
     Config(String),
 }
@@ -147,5 +153,25 @@ mod tests {
         let signer_err = SignerError::RpcError("timeout".to_string());
         let client_err: ClientError = signer_err.into();
         assert!(matches!(client_err, ClientError::Signing(_)));
+    }
+
+    #[test]
+    fn test_client_error_recipient_mismatch() {
+        let err = ClientError::RecipientMismatch {
+            expected: "expected_addr".to_string(),
+            actual: "actual_addr".to_string(),
+        };
+        assert!(err.to_string().contains("expected_addr"));
+        assert!(err.to_string().contains("actual_addr"));
+    }
+
+    #[test]
+    fn test_client_error_amount_exceeds_max() {
+        let err = ClientError::AmountExceedsMax {
+            amount: 1_000_000,
+            max: 500_000,
+        };
+        assert!(err.to_string().contains("1000000"));
+        assert!(err.to_string().contains("500000"));
     }
 }

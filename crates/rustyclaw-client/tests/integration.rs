@@ -301,3 +301,62 @@ async fn test_wallet_debug_in_client_debug() {
         "debug must NOT leak keypair"
     );
 }
+
+#[tokio::test]
+async fn test_recipient_mismatch_rejected() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_json(sample_payment_required()))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = RustyClawClient::new(
+        test_wallet(),
+        ClientConfig {
+            gateway_url: mock_server.uri(),
+            expected_recipient: Some("DifferentWalletAddress".to_string()),
+            ..ClientConfig::default()
+        },
+    )
+    .unwrap();
+
+    let result = client.chat(sample_chat_request()).await;
+    assert!(result.is_err());
+    assert!(
+        matches!(result.unwrap_err(), ClientError::RecipientMismatch { .. }),
+        "expected RecipientMismatch error"
+    );
+}
+
+#[tokio::test]
+async fn test_amount_exceeds_max_rejected() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_json(sample_payment_required()))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // sample_payment_required has amount "2625", so set max below that
+    let client = RustyClawClient::new(
+        test_wallet(),
+        ClientConfig {
+            gateway_url: mock_server.uri(),
+            max_payment_amount: Some(1000),
+            ..ClientConfig::default()
+        },
+    )
+    .unwrap();
+
+    let result = client.chat(sample_chat_request()).await;
+    assert!(result.is_err());
+    assert!(
+        matches!(result.unwrap_err(), ClientError::AmountExceedsMax { .. }),
+        "expected AmountExceedsMax error"
+    );
+}

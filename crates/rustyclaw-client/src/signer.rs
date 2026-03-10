@@ -44,10 +44,19 @@ async fn get_latest_blockhash(rpc_url: &str, http: &reqwest::Client) -> Result<H
         .await
         .map_err(|e| SignerError::RpcError(e.to_string()))?;
 
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(SignerError::RpcError(format!("RPC returned HTTP {status}")));
+    }
+
     let json: serde_json::Value = resp
         .json()
         .await
         .map_err(|e| SignerError::RpcError(format!("failed to parse RPC response: {e}")))?;
+
+    if let Some(err_obj) = json.get("error") {
+        return Err(SignerError::RpcError(format!("RPC error: {err_obj}")));
+    }
 
     let blockhash_str = json["result"]["value"]["blockhash"]
         .as_str()
