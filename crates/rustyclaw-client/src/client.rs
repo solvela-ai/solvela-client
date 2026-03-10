@@ -156,12 +156,25 @@ impl RustyClawClient {
         }
     }
 
-    async fn pay_and_resend(
+    /// Sign a payment for a 402 response and return the encoded
+    /// `PAYMENT-SIGNATURE` header value.
+    ///
+    /// This extracts the signing flow from the 402 handshake so that
+    /// external consumers (e.g., the proxy sidecar) can reuse payment
+    /// signing without coupling to `ChatRequest`/`ChatResponse` types.
+    ///
+    /// Applies all security validations (`expected_recipient`, `max_payment_amount`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `ClientError::NoCompatibleScheme` if no supported scheme is found,
+    /// `ClientError::RecipientMismatch` or `ClientError::AmountExceedsMax` if
+    /// security validations fail, or `ClientError::Signing` if transaction
+    /// signing fails.
+    pub async fn sign_payment_for_402(
         &self,
-        url: &str,
-        req: &ChatRequest,
         payment_required: &PaymentRequired,
-    ) -> Result<ChatResponse, ClientError> {
+    ) -> Result<String, ClientError> {
         let accept = self
             .pick_scheme(&payment_required.accepts)
             .ok_or(ClientError::NoCompatibleScheme)?;
@@ -201,9 +214,18 @@ impl RustyClawClient {
         .await?;
 
         let payload = signer::build_payment_payload(&payment_required.resource, accept, &signed_tx);
-        let payment_header = signer::encode_payment_header(&payload);
+        Ok(signer::encode_payment_header(&payload))
+    }
 
-        debug!(scheme = %accept.scheme, amount = amount_atomic, "sending paid request");
+    async fn pay_and_resend(
+        &self,
+        url: &str,
+        req: &ChatRequest,
+        payment_required: &PaymentRequired,
+    ) -> Result<ChatResponse, ClientError> {
+        let payment_header = self.sign_payment_for_402(payment_required).await?;
+
+        debug!("sending paid request");
 
         let resp = self
             .http
@@ -456,6 +478,28 @@ mod tests {
         let result = client.models().await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "openai/gpt-4o");
+    }
+
+    #[tokio::test]
+    async fn test_sign_payment_for_402_rejects_unknown_scheme() {
+        let mock_server = MockServer::start().await;
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        let mut pr = sample_payment_required();
+        pr.accepts[0].scheme = "unknown".to_string();
+
+        let result = client.sign_payment_for_402(&pr).await;
+        assert!(matches!(
+            result.unwrap_err(),
+            ClientError::NoCompatibleScheme
+        ));
     }
 
     #[tokio::test]

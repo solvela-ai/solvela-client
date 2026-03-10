@@ -67,6 +67,20 @@ impl Wallet {
         Ok(Self { keypair })
     }
 
+    /// Import a wallet from raw keypair bytes (64 bytes: 32 secret + 32 public).
+    ///
+    /// This accepts the format produced by `solana-keygen` JSON files
+    /// after parsing the JSON array into bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WalletError::InvalidKeypair` if the bytes are not a valid Ed25519 keypair.
+    pub fn from_keypair_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
+        let keypair =
+            Keypair::try_from(bytes).map_err(|e| WalletError::InvalidKeypair(e.to_string()))?;
+        Ok(Self { keypair })
+    }
+
     /// Import a wallet from an environment variable containing a base58 keypair.
     ///
     /// # Errors
@@ -216,6 +230,24 @@ mod tests {
         let (wallet, _) = Wallet::create();
         let pubkey = wallet.pubkey();
         assert_eq!(pubkey.to_string(), wallet.address());
+    }
+
+    #[test]
+    fn test_from_keypair_bytes_roundtrip() {
+        let (wallet, _) = Wallet::create();
+        let bytes = wallet.keypair().to_bytes();
+        let restored = Wallet::from_keypair_bytes(&bytes).unwrap();
+        assert_eq!(wallet.address(), restored.address());
+    }
+
+    #[test]
+    fn test_from_keypair_bytes_invalid() {
+        let result = Wallet::from_keypair_bytes(&[0u8; 32]); // too short
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            WalletError::InvalidKeypair(_)
+        ));
     }
 
     #[test]
