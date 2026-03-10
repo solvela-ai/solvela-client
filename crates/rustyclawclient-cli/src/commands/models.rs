@@ -82,11 +82,12 @@ fn format_context(tokens: u32) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
+    if s.chars().count() <= max {
         s.to_string()
     } else {
         let end = max.saturating_sub(3);
-        format!("{}...", &s[..end])
+        let prefix: String = s.chars().take(end).collect();
+        format!("{prefix}...")
     }
 }
 

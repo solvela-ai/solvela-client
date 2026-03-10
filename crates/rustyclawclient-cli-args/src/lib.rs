@@ -140,16 +140,27 @@ pub fn save_wallet(path: &str, keypair_bytes: &[u8], force: bool) -> Result<Path
     let json = serde_json::to_string(&keypair_bytes)
         .map_err(|e| format!("failed to serialize keypair: {e}"))?;
 
-    std::fs::write(&expanded, &json)
-        .map_err(|e| format!("failed to write {}: {e}", expanded.display()))?;
-
-    // Set file permissions to 0o600 (owner read/write only)
+    // Write with restricted permissions from the start (0o600) to avoid
+    // a window where the file is world-readable before chmod.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(&expanded, perms)
-            .map_err(|e| format!("failed to set permissions on {}: {e}", expanded.display()))?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&expanded)
+            .map_err(|e| format!("failed to create {}: {e}", expanded.display()))?;
+        file.write_all(json.as_bytes())
+            .map_err(|e| format!("failed to write {}: {e}", expanded.display()))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&expanded, &json)
+            .map_err(|e| format!("failed to write {}: {e}", expanded.display()))?;
     }
 
     Ok(expanded)
