@@ -55,6 +55,7 @@ fn build_test_app(gateway_url: &str) -> axum::Router {
     let state = Arc::new(rustyclawclient_proxy::ProxyState {
         client,
         gateway_url: gateway_url.to_string(),
+        http: reqwest::Client::new(),
     });
     rustyclawclient_proxy::build_proxy_router(state)
 }
@@ -278,6 +279,7 @@ async fn test_amount_exceeds_max_returns_error() {
     let state = Arc::new(rustyclawclient_proxy::ProxyState {
         client,
         gateway_url: mock.uri(),
+        http: reqwest::Client::new(),
     });
     let app = rustyclawclient_proxy::build_proxy_router(state);
 

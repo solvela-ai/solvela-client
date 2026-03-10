@@ -114,6 +114,7 @@ async fn main() {
     let state = Arc::new(proxy::ProxyState {
         client,
         gateway_url: cli.gateway.trim_end_matches('/').to_string(),
+        http: reqwest::Client::new(),
     });
 
     let app = proxy::build_proxy_router(state);

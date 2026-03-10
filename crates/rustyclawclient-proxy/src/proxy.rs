@@ -15,6 +15,7 @@ use rustyclaw_protocol::PaymentRequired;
 pub struct ProxyState {
     pub client: RustyClawClient,
     pub gateway_url: String,
+    pub http: reqwest::Client,
 }
 
 /// Maximum request body size (10 MB — matches gateway limit).
@@ -45,27 +46,9 @@ async fn proxy_handler(
 
     debug!(method = %method, path = %path, "proxying request");
 
-    // Build the forwarded request, stripping hop-by-hop and security-sensitive headers
-    let http = reqwest::Client::new();
-    let mut req_builder = http.request(reqwest_method(&method), &gateway_url);
-
-    // Forward caller's headers (except hop-by-hop and PAYMENT-SIGNATURE)
-    for (name, value) in &headers {
-        let name_lower = name.as_str().to_lowercase();
-        // Skip hop-by-hop headers and PAYMENT-SIGNATURE (security: prevent injection)
-        if matches!(
-            name_lower.as_str(),
-            "host" | "connection" | "transfer-encoding" | "payment-signature"
-        ) {
-            if name_lower == "payment-signature" {
-                warn!("stripped PAYMENT-SIGNATURE header from caller (security)");
-            }
-            continue;
-        }
-        if let Ok(v) = value.to_str() {
-            req_builder = req_builder.header(name.as_str(), v);
-        }
-    }
+    // Build the forwarded request
+    let mut req_builder = state.http.request(reqwest_method(&method), &gateway_url);
+    req_builder = forward_headers(req_builder, &headers);
 
     // Attach body for methods that have one
     if method == Method::POST || method == Method::PUT || method == Method::PATCH {
@@ -97,16 +80,7 @@ async fn proxy_handler(
 
     // If 402, attempt payment signing and retry
     if resp_status == reqwest::StatusCode::PAYMENT_REQUIRED {
-        return handle_402(
-            &state,
-            &http,
-            &gateway_url,
-            &method,
-            &headers,
-            &body,
-            gateway_resp,
-        )
-        .await;
+        return handle_402(&state, &gateway_url, &method, &headers, &body, gateway_resp).await;
     }
 
     // Non-402: pipe through response as-is
@@ -116,7 +90,6 @@ async fn proxy_handler(
 /// Handle a 402 response: parse `PaymentRequired`, sign payment, retry.
 async fn handle_402(
     state: &ProxyState,
-    http: &reqwest::Client,
     gateway_url: &str,
     method: &Method,
     headers: &HeaderMap,
@@ -163,23 +136,8 @@ async fn handle_402(
     };
 
     // Retry the request with the PAYMENT-SIGNATURE header
-    let mut retry_builder = http.request(reqwest_method(method), gateway_url);
-
-    // Forward original headers (same filtering as initial request)
-    for (name, value) in headers {
-        let name_lower = name.as_str().to_lowercase();
-        if matches!(
-            name_lower.as_str(),
-            "host" | "connection" | "transfer-encoding" | "payment-signature"
-        ) {
-            continue;
-        }
-        if let Ok(v) = value.to_str() {
-            retry_builder = retry_builder.header(name.as_str(), v);
-        }
-    }
-
-    // Add payment header
+    let mut retry_builder = state.http.request(reqwest_method(method), gateway_url);
+    retry_builder = forward_headers(retry_builder, headers);
     retry_builder = retry_builder.header("PAYMENT-SIGNATURE", &payment_header);
 
     // Attach body
@@ -211,6 +169,29 @@ async fn handle_402(
             None,
         ),
     }
+}
+
+/// Forward caller headers, stripping hop-by-hop and security-sensitive headers.
+fn forward_headers(
+    mut builder: reqwest::RequestBuilder,
+    headers: &HeaderMap,
+) -> reqwest::RequestBuilder {
+    for (name, value) in headers {
+        let name_lower = name.as_str().to_lowercase();
+        if matches!(
+            name_lower.as_str(),
+            "host" | "connection" | "transfer-encoding" | "payment-signature"
+        ) {
+            if name_lower == "payment-signature" {
+                warn!("stripped PAYMENT-SIGNATURE header from caller (security)");
+            }
+            continue;
+        }
+        if let Ok(v) = value.to_str() {
+            builder = builder.header(name.as_str(), v);
+        }
+    }
+    builder
 }
 
 /// Convert a reqwest response into an Axum response, preserving headers and
