@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rustyclaw-client",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/sky64/RustyClawClient"
+
+[workspace.dependencies]
+# Protocol
+rustyclaw-protocol = { path = "../RustyClawRouter/crates/protocol" }
+
+# Solana
+solana-sdk = "2.2"
+solana-client = "2.2"
+spl-token = "7"
+spl-associated-token-account = "5"
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Crypto
+base64 = "0.22"
+bs58 = "0.5"
+ed25519-dalek = "2"
+bip39 = { version = "2", features = ["rand"] }
+bincode = "1"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# Observability
+tracing = "0.1"
+
+# Error handling
+thiserror = "2"
+
+# Security
+zeroize = "1"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
