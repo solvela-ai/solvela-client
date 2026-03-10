@@ -8,6 +8,13 @@ use axum::Router;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{debug, error, info, warn};
 
+/// Error types that represent client-side validation failures (not server errors).
+const CLIENT_VALIDATION_ERRORS: &[&str] = &[
+    "amount_exceeds_max",
+    "recipient_mismatch",
+    "no_compatible_scheme",
+];
+
 use rustyclaw_client::RustyClawClient;
 use rustyclaw_protocol::PaymentRequired;
 
@@ -270,7 +277,11 @@ fn proxy_error_response(
     message: &str,
     details: Option<serde_json::Value>,
 ) -> Response {
-    error!(error_type = %error_type, message = %message, "proxy error");
+    if CLIENT_VALIDATION_ERRORS.contains(&error_type) {
+        warn!(error_type = %error_type, message = %message, "proxy validation error");
+    } else {
+        error!(error_type = %error_type, message = %message, "proxy error");
+    }
 
     let mut body = serde_json::json!({
         "error": {
@@ -302,12 +313,16 @@ fn proxy_error_response(
 /// Convert an `axum::http::Method` to a `reqwest::Method`.
 fn reqwest_method(method: &Method) -> reqwest::Method {
     match *method {
+        Method::GET => reqwest::Method::GET,
         Method::POST => reqwest::Method::POST,
         Method::PUT => reqwest::Method::PUT,
         Method::DELETE => reqwest::Method::DELETE,
         Method::PATCH => reqwest::Method::PATCH,
         Method::HEAD => reqwest::Method::HEAD,
         Method::OPTIONS => reqwest::Method::OPTIONS,
-        _ => reqwest::Method::GET,
+        _ => {
+            warn!(method = %method, "unsupported HTTP method, forwarding as-is");
+            reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap_or(reqwest::Method::GET)
+        }
     }
 }

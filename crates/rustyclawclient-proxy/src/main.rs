@@ -84,16 +84,18 @@ async fn main() {
     info!(wallet = %wallet.address(), "wallet loaded");
 
     // Build client config
+    let gateway_url = cli.gateway.trim_end_matches('/').to_string();
     let mut config = ClientConfig {
-        gateway_url: cli.gateway.trim_end_matches('/').to_string(),
+        gateway_url: gateway_url.clone(),
         rpc_url: cli.rpc_url,
         ..ClientConfig::default()
     };
 
     if let Some(max_usdc) = cli.max_payment {
         // Convert USDC to atomic units (1 USDC = 1_000_000 atomic)
+        // Round to avoid floating-point truncation (e.g., 0.10 * 1e6 = 99999.99...)
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let atomic = (max_usdc * 1_000_000.0) as u64;
+        let atomic = (max_usdc * 1_000_000.0).round() as u64;
         config.max_payment_amount = Some(atomic);
         info!(max_usdc = %max_usdc, max_atomic = atomic, "payment cap enabled");
     }
@@ -111,10 +113,15 @@ async fn main() {
         }
     };
 
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
     let state = Arc::new(proxy::ProxyState {
         client,
-        gateway_url: cli.gateway.trim_end_matches('/').to_string(),
-        http: reqwest::Client::new(),
+        gateway_url,
+        http,
     });
 
     let app = proxy::build_proxy_router(state);
@@ -160,6 +167,20 @@ fn load_wallet(env_var: &str, file_path: &str) -> Result<Wallet, String> {
 
     // Try wallet file
     if expanded.exists() {
+        // Warn if wallet file has insecure permissions (private key exposure risk)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if let Ok(meta) = expanded.metadata() {
+                if meta.mode() & 0o077 != 0 {
+                    tracing::warn!(
+                        path = %expanded.display(),
+                        "wallet file has insecure permissions (should be 0600)"
+                    );
+                }
+            }
+        }
+
         let contents = std::fs::read_to_string(&expanded)
             .map_err(|e| format!("failed to read {}: {e}", expanded.display()))?;
 
