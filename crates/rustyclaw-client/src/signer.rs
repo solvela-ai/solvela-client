@@ -17,7 +17,7 @@ const USDC_DECIMALS: u8 = 6;
 const ASSOCIATED_TOKEN_PROGRAM_ID: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 
 /// Compute the associated token address for a wallet and mint.
-fn get_associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
+pub(crate) fn associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
     let ata_program: Pubkey = ASSOCIATED_TOKEN_PROGRAM_ID
         .parse()
         .expect("ATA program ID is valid");
@@ -92,8 +92,8 @@ pub(crate) async fn sign_exact_payment(
         .parse()
         .map_err(|e| SignerError::TransactionBuild(format!("invalid recipient: {e}")))?;
 
-    let source_ata = get_associated_token_address(&wallet.pubkey(), &mint);
-    let dest_ata = get_associated_token_address(&recipient_pubkey, &mint);
+    let source_ata = associated_token_address(&wallet.pubkey(), &mint);
+    let dest_ata = associated_token_address(&recipient_pubkey, &mint);
 
     let ix = spl_token::instruction::transfer_checked(
         &spl_token::id(),
@@ -154,11 +154,11 @@ mod tests {
     use solana_sdk::signer::Signer;
 
     #[test]
-    fn test_get_associated_token_address_deterministic() {
+    fn test_associated_token_address_deterministic() {
         let wallet = Pubkey::new_unique();
         let mint: Pubkey = USDC_MINT.parse().unwrap();
-        let ata1 = get_associated_token_address(&wallet, &mint);
-        let ata2 = get_associated_token_address(&wallet, &mint);
+        let ata1 = associated_token_address(&wallet, &mint);
+        let ata2 = associated_token_address(&wallet, &mint);
         assert_eq!(ata1, ata2);
         // ATA should differ from the wallet itself
         assert_ne!(ata1, wallet);
@@ -171,8 +171,8 @@ mod tests {
         let mint: Pubkey = USDC_MINT.parse().unwrap();
         let amount: u64 = 2_625;
 
-        let source_ata = get_associated_token_address(&payer.pubkey(), &mint);
-        let dest_ata = get_associated_token_address(&recipient, &mint);
+        let source_ata = associated_token_address(&payer.pubkey(), &mint);
+        let dest_ata = associated_token_address(&recipient, &mint);
 
         let ix = spl_token::instruction::transfer_checked(
             &spl_token::id(),

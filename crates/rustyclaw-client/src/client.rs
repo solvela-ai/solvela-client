@@ -1,8 +1,10 @@
 use reqwest::StatusCode;
+use solana_sdk::pubkey::Pubkey;
 use tracing::debug;
 
 use rustyclaw_protocol::{
     ChatMessage, ChatRequest, ChatResponse, CostBreakdown, ModelInfo, PaymentRequired, Role,
+    USDC_MINT,
 };
 
 use crate::config::ClientConfig;
@@ -248,6 +250,73 @@ impl RustyClawClient {
                 message: body,
             }),
         }
+    }
+
+    /// Query the USDC-SPL balance of this client's wallet.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ClientError::BalanceError` if the RPC call fails.
+    pub async fn usdc_balance(&self) -> Result<f64, ClientError> {
+        self.usdc_balance_of(&self.wallet.address()).await
+    }
+
+    /// Query the USDC-SPL balance of an arbitrary Solana address.
+    ///
+    /// Returns `0.0` if the associated token account does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ClientError::BalanceError` if the address is invalid or the
+    /// RPC call fails for a reason other than "account not found".
+    pub async fn usdc_balance_of(&self, address: &str) -> Result<f64, ClientError> {
+        let owner: Pubkey = address
+            .parse()
+            .map_err(|e| ClientError::BalanceError(format!("invalid address: {e}")))?;
+
+        let mint: Pubkey = USDC_MINT
+            .parse()
+            .map_err(|e| ClientError::BalanceError(format!("invalid USDC mint: {e}")))?;
+
+        let ata = signer::associated_token_address(&owner, &mint);
+
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountBalance",
+            "params": [ata.to_string()]
+        });
+
+        let resp = self
+            .http
+            .post(&self.config.rpc_url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ClientError::BalanceError(e.to_string()))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(ClientError::BalanceError(format!(
+                "RPC returned HTTP {status}"
+            )));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ClientError::BalanceError(format!("failed to parse RPC response: {e}")))?;
+
+        // Account not found → balance is 0
+        if json.get("error").is_some() {
+            return Ok(0.0);
+        }
+
+        let ui_amount = json["result"]["value"]["uiAmount"]
+            .as_f64()
+            .unwrap_or(0.0);
+
+        Ok(ui_amount)
     }
 
     /// Pick the best compatible payment scheme from the 402 accepts list.
@@ -500,6 +569,91 @@ mod tests {
             result.unwrap_err(),
             ClientError::NoCompatibleScheme
         ));
+    }
+
+    #[tokio::test]
+    async fn test_usdc_balance_of_parses_rpc_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "context": { "slot": 123_456 },
+                    "value": {
+                        "amount": "1500000",
+                        "decimals": 6,
+                        "uiAmount": 1.5,
+                        "uiAmountString": "1.5"
+                    }
+                }
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: "http://unused".to_string(),
+                rpc_url: mock_server.uri(),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        let balance = client
+            .usdc_balance_of(&client.wallet.address())
+            .await
+            .unwrap();
+        assert!((balance - 1.5).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_usdc_balance_returns_zero_for_missing_account() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32602,
+                    "message": "Invalid param: could not find account"
+                }
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: "http://unused".to_string(),
+                rpc_url: mock_server.uri(),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        let balance = client.usdc_balance().await.unwrap();
+        assert!((balance - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_usdc_balance_of_invalid_address() {
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig::default(),
+        )
+        .unwrap();
+
+        let result = client.usdc_balance_of("not-a-valid-pubkey").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ClientError::BalanceError(_)));
     }
 
     #[tokio::test]

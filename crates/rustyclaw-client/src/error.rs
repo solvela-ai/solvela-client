@@ -73,6 +73,9 @@ pub enum ClientError {
 
     #[error("client configuration error: {0}")]
     Config(String),
+
+    #[error("balance check failed: {0}")]
+    BalanceError(String),
 }
 
 #[cfg(test)]
