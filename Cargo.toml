@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/rustyclaw-client",
+    "crates/rustyclawclient-proxy",
 ]
 
 [workspace.package]
@@ -38,8 +39,18 @@ bincode = "1"
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 
+# HTTP server (proxy)
+axum = "0.8"
+tower-http = { version = "0.6", features = ["limit"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
 # Observability
 tracing = "0.1"
+
+# Tracing subscriber (binary only)
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Error handling
 thiserror = "2"
