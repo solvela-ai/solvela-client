@@ -3,11 +3,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use solana_sdk::pubkey::Pubkey;
+use thiserror::Error;
 use tracing::{debug, error, warn};
 
 use rustyclaw_protocol::USDC_MINT;
 
 use crate::signer;
+
+/// Errors that can occur while fetching the USDC balance.
+#[derive(Debug, Error)]
+enum BalanceError {
+    #[error("RPC request failed: {0}")]
+    RpcRequest(String),
+    #[error("RPC returned HTTP {0}")]
+    HttpStatus(u16),
+    #[error("failed to parse RPC response: {0}")]
+    ParseResponse(String),
+}
 
 /// Default poll interval: 30 seconds.
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(30);
@@ -34,8 +46,7 @@ const DEFAULT_LOW_BALANCE_THRESHOLD: f64 = 0.10;
 /// //     "https://api.mainnet-beta.solana.com",
 /// //     &client_address,
 /// // )
-/// // .on_low_balance(|bal| eprintln!("Low balance: {bal} USDC"))
-/// // .build();
+/// // .on_low_balance(|bal| eprintln!("Low balance: {bal} USDC"));
 /// //
 /// // tokio::spawn(monitor.run());
 /// # }
@@ -99,21 +110,42 @@ impl BalanceMonitor {
     /// 1. Fetches the USDC-SPL balance via RPC
     /// 2. Writes the atomic balance (in atomic USDC units) to the shared state
     /// 3. If the balance is below the threshold, fires the low-balance callback
+    ///
+    /// # Panics
+    ///
+    /// Panics if `USDC_MINT` cannot be parsed as a `Pubkey`. This is a compile-time
+    /// constant and should never fail.
     pub async fn run(self) {
+        let owner: Pubkey = match self.wallet_address.parse() {
+            Ok(pk) => pk,
+            Err(e) => {
+                error!(error = %e, address = %self.wallet_address, "invalid wallet address — monitor exiting");
+                return;
+            }
+        };
+        let mint: Pubkey = USDC_MINT
+            .parse()
+            .expect("USDC_MINT is a compile-time constant and must be a valid pubkey");
+        let ata = signer::associated_token_address(&owner, &mint);
+
         let http = reqwest::Client::new();
         let mut interval = tokio::time::interval(self.poll_interval);
+        let mut was_low = false;
 
         loop {
             interval.tick().await;
 
-            match self.fetch_balance(&http).await {
+            match self.fetch_balance(&http, &ata).await {
                 Ok(ui_amount) => {
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     let atomic_amount = (ui_amount * 1_000_000.0) as u64;
+                    // Relaxed is sufficient: this is a single-producer stat read for display only;
+                    // no other memory operations depend on its ordering.
                     self.balance_state.store(atomic_amount, Ordering::Relaxed);
                     debug!(balance_usdc = ui_amount, "balance poll complete");
 
-                    if ui_amount < self.low_balance_threshold {
+                    let is_low = ui_amount < self.low_balance_threshold;
+                    if is_low && !was_low {
                         warn!(
                             balance_usdc = ui_amount,
                             threshold = self.low_balance_threshold,
@@ -123,6 +155,7 @@ impl BalanceMonitor {
                             cb(ui_amount);
                         }
                     }
+                    was_low = is_low;
                 }
                 Err(e) => {
                     error!(error = %e, "balance poll failed");
@@ -133,18 +166,11 @@ impl BalanceMonitor {
     }
 
     /// Fetch the USDC-SPL balance from the Solana RPC.
-    async fn fetch_balance(&self, http: &reqwest::Client) -> Result<f64, String> {
-        let owner: Pubkey = self
-            .wallet_address
-            .parse()
-            .map_err(|e| format!("invalid address: {e}"))?;
-
-        let mint: Pubkey = USDC_MINT
-            .parse()
-            .map_err(|e| format!("invalid USDC mint: {e}"))?;
-
-        let ata = signer::associated_token_address(&owner, &mint);
-
+    async fn fetch_balance(
+        &self,
+        http: &reqwest::Client,
+        ata: &Pubkey,
+    ) -> Result<f64, BalanceError> {
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -157,13 +183,16 @@ impl BalanceMonitor {
             .json(&body)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| BalanceError::RpcRequest(e.to_string()))?;
 
         if !resp.status().is_success() {
-            return Err(format!("RPC returned HTTP {}", resp.status()));
+            return Err(BalanceError::HttpStatus(resp.status().as_u16()));
         }
 
-        let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| BalanceError::ParseResponse(e.to_string()))?;
 
         // Account not found -> balance is 0
         if json.get("error").is_some() {
