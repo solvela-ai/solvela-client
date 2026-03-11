@@ -2,6 +2,7 @@ use std::time::Duration;
 
 /// Configuration for the `RustyClawClient`.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ClientConfig {
     /// Gateway URL (e.g., `http://localhost:8402`).
     pub gateway_url: String,
@@ -20,6 +21,20 @@ pub struct ClientConfig {
     /// reject 402 responses that request more than this amount, preventing
     /// overcharge attacks by malicious gateways.
     pub max_payment_amount: Option<u64>,
+    /// Enable response caching (LRU, TTL-based). Default: `false`.
+    pub enable_cache: bool,
+    /// Enable session sticking (model affinity). Default: `false`.
+    pub enable_sessions: bool,
+    /// Session TTL. Default: 30 minutes.
+    pub session_ttl: Duration,
+    /// Enable degraded response detection and auto-retry. Default: `false`.
+    pub enable_quality_check: bool,
+    /// Maximum number of quality retries before returning the degraded response.
+    /// Default: `1`.
+    pub max_quality_retries: u32,
+    /// Optional free tier fallback model. When set and wallet balance is zero,
+    /// requests are routed to this model instead of paying.
+    pub free_fallback_model: Option<String>,
 }
 
 impl Default for ClientConfig {
@@ -31,6 +46,12 @@ impl Default for ClientConfig {
             timeout: Duration::from_secs(180),
             expected_recipient: None,
             max_payment_amount: None,
+            enable_cache: false,
+            enable_sessions: false,
+            session_ttl: Duration::from_secs(30 * 60),
+            enable_quality_check: false,
+            max_quality_retries: 1,
+            free_fallback_model: None,
         }
     }
 }
@@ -44,6 +65,12 @@ pub struct ClientBuilder {
     timeout: Option<Duration>,
     expected_recipient: Option<String>,
     max_payment_amount: Option<u64>,
+    enable_cache: Option<bool>,
+    enable_sessions: Option<bool>,
+    session_ttl: Option<Duration>,
+    enable_quality_check: Option<bool>,
+    max_quality_retries: Option<u32>,
+    free_fallback_model: Option<String>,
 }
 
 impl ClientBuilder {
@@ -56,6 +83,12 @@ impl ClientBuilder {
             timeout: None,
             expected_recipient: None,
             max_payment_amount: None,
+            enable_cache: None,
+            enable_sessions: None,
+            session_ttl: None,
+            enable_quality_check: None,
+            max_quality_retries: None,
+            free_fallback_model: None,
         }
     }
 
@@ -95,6 +128,42 @@ impl ClientBuilder {
         self
     }
 
+    #[must_use]
+    pub fn enable_cache(mut self, enable: bool) -> Self {
+        self.enable_cache = Some(enable);
+        self
+    }
+
+    #[must_use]
+    pub fn enable_sessions(mut self, enable: bool) -> Self {
+        self.enable_sessions = Some(enable);
+        self
+    }
+
+    #[must_use]
+    pub fn session_ttl(mut self, ttl: Duration) -> Self {
+        self.session_ttl = Some(ttl);
+        self
+    }
+
+    #[must_use]
+    pub fn enable_quality_check(mut self, enable: bool) -> Self {
+        self.enable_quality_check = Some(enable);
+        self
+    }
+
+    #[must_use]
+    pub fn max_quality_retries(mut self, max: u32) -> Self {
+        self.max_quality_retries = Some(max);
+        self
+    }
+
+    #[must_use]
+    pub fn free_fallback_model(mut self, model: &str) -> Self {
+        self.free_fallback_model = Some(model.to_string());
+        self
+    }
+
     /// Build a `ClientConfig` from the builder state, using defaults for unset values.
     #[must_use]
     pub fn build_config(self) -> ClientConfig {
@@ -106,6 +175,16 @@ impl ClientBuilder {
             timeout: self.timeout.unwrap_or(defaults.timeout),
             expected_recipient: self.expected_recipient.or(defaults.expected_recipient),
             max_payment_amount: self.max_payment_amount.or(defaults.max_payment_amount),
+            enable_cache: self.enable_cache.unwrap_or(defaults.enable_cache),
+            enable_sessions: self.enable_sessions.unwrap_or(defaults.enable_sessions),
+            session_ttl: self.session_ttl.unwrap_or(defaults.session_ttl),
+            enable_quality_check: self
+                .enable_quality_check
+                .unwrap_or(defaults.enable_quality_check),
+            max_quality_retries: self
+                .max_quality_retries
+                .unwrap_or(defaults.max_quality_retries),
+            free_fallback_model: self.free_fallback_model.or(defaults.free_fallback_model),
         }
     }
 }
@@ -183,5 +262,53 @@ mod tests {
         let config = ClientConfig::default();
         assert!(config.expected_recipient.is_none());
         assert!(config.max_payment_amount.is_none());
+    }
+
+    #[test]
+    fn test_default_config_smart_features_off() {
+        let config = ClientConfig::default();
+        assert!(!config.enable_cache);
+        assert!(!config.enable_sessions);
+        assert_eq!(config.session_ttl, Duration::from_secs(30 * 60));
+        assert!(!config.enable_quality_check);
+        assert_eq!(config.max_quality_retries, 1);
+        assert!(config.free_fallback_model.is_none());
+    }
+
+    #[test]
+    fn test_builder_enable_cache() {
+        let config = ClientBuilder::new().enable_cache(true).build_config();
+        assert!(config.enable_cache);
+    }
+
+    #[test]
+    fn test_builder_enable_sessions_with_ttl() {
+        let config = ClientBuilder::new()
+            .enable_sessions(true)
+            .session_ttl(Duration::from_secs(600))
+            .build_config();
+        assert!(config.enable_sessions);
+        assert_eq!(config.session_ttl, Duration::from_secs(600));
+    }
+
+    #[test]
+    fn test_builder_quality_check() {
+        let config = ClientBuilder::new()
+            .enable_quality_check(true)
+            .max_quality_retries(3)
+            .build_config();
+        assert!(config.enable_quality_check);
+        assert_eq!(config.max_quality_retries, 3);
+    }
+
+    #[test]
+    fn test_builder_free_fallback_model() {
+        let config = ClientBuilder::new()
+            .free_fallback_model("openai/gpt-oss-120b")
+            .build_config();
+        assert_eq!(
+            config.free_fallback_model.as_deref(),
+            Some("openai/gpt-oss-120b")
+        );
     }
 }
