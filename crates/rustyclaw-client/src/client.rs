@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
 use futures::stream::{self, Stream, StreamExt};
 use reqwest::StatusCode;
 use reqwest_eventsource::RequestBuilderExt;
@@ -22,6 +25,12 @@ pub struct RustyClawClient {
     wallet: Wallet,
     config: ClientConfig,
     http: reqwest::Client,
+    /// Shared atomic balance state. `u64::MAX` = not yet polled.
+    balance_state: Arc<AtomicU64>,
+    /// Optional response cache (created if `config.enable_cache` is true).
+    cache: Option<crate::cache::ResponseCache>,
+    /// Optional session store (created if `config.enable_sessions` is true).
+    session_store: Option<crate::session::SessionStore>,
 }
 
 impl RustyClawClient {
@@ -35,10 +44,26 @@ impl RustyClawClient {
             .timeout(config.timeout)
             .build()
             .map_err(|e| ClientError::Config(format!("failed to build HTTP client: {e}")))?;
+
+        let cache = if config.enable_cache {
+            Some(crate::cache::ResponseCache::new())
+        } else {
+            None
+        };
+
+        let session_store = if config.enable_sessions {
+            Some(crate::session::SessionStore::new(config.session_ttl))
+        } else {
+            None
+        };
+
         Ok(Self {
             wallet,
             config,
             http,
+            balance_state: Arc::new(AtomicU64::new(u64::MAX)),
+            cache,
+            session_store,
         })
     }
 
@@ -412,6 +437,31 @@ impl RustyClawClient {
         Ok(ui_amount)
     }
 
+    /// Return the last known USDC balance, or `None` if it has never been polled.
+    ///
+    /// Reads the shared `AtomicU64` without blocking. The value is in atomic
+    /// USDC units (1 USDC = 1,000,000 atomic). Returns `None` if the sentinel
+    /// value `u64::MAX` is present (meaning the balance has not been polled yet).
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // USDC amounts fit well within f64 mantissa
+    pub fn last_known_balance(&self) -> Option<f64> {
+        let raw = self.balance_state.load(Ordering::Relaxed);
+        if raw == u64::MAX {
+            None
+        } else {
+            Some(raw as f64 / 1_000_000.0)
+        }
+    }
+
+    /// Return a clone of the shared balance state `Arc<AtomicU64>`.
+    ///
+    /// Pass this to `BalanceMonitor::new()` so the monitor can update the
+    /// balance in the background while the client reads it lock-free.
+    #[must_use]
+    pub fn balance_state(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.balance_state)
+    }
+
     /// Pick the best compatible payment scheme from the 402 accepts list.
     ///
     /// Currently only "exact" (direct transfer) is supported. Escrow signing
@@ -434,6 +484,8 @@ impl std::fmt::Debug for RustyClawClient {
         f.debug_struct("RustyClawClient")
             .field("wallet", &self.wallet)
             .field("gateway_url", &self.config.gateway_url)
+            .field("cache_enabled", &self.cache.is_some())
+            .field("sessions_enabled", &self.session_store.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -842,5 +894,57 @@ data: [DONE]\n\n";
             Err(other) => panic!("expected Signing error, got {other:?}"),
             Ok(_) => panic!("expected error, got Ok"),
         }
+    }
+
+    #[test]
+    fn test_last_known_balance_returns_none_before_poll() {
+        let client = RustyClawClient::new(test_wallet(), ClientConfig::default()).unwrap();
+        assert!(client.last_known_balance().is_none());
+    }
+
+    #[test]
+    fn test_last_known_balance_reads_atomic() {
+        let client = RustyClawClient::new(test_wallet(), ClientConfig::default()).unwrap();
+        // Simulate a balance monitor writing 1.5 USDC (1_500_000 atomic)
+        client
+            .balance_state
+            .store(1_500_000, std::sync::atomic::Ordering::Relaxed);
+        let balance = client.last_known_balance().unwrap();
+        assert!((balance - 1.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_balance_state_returns_shared_arc() {
+        let client = RustyClawClient::new(test_wallet(), ClientConfig::default()).unwrap();
+        let state = client.balance_state();
+        state.store(2_000_000, std::sync::atomic::Ordering::Relaxed);
+        let balance = client.last_known_balance().unwrap();
+        assert!((balance - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_cache_created_when_enabled() {
+        let config = ClientConfig {
+            enable_cache: true,
+            ..ClientConfig::default()
+        };
+        let client = RustyClawClient::new(test_wallet(), config).unwrap();
+        assert!(client.cache.is_some());
+    }
+
+    #[test]
+    fn test_cache_not_created_when_disabled() {
+        let client = RustyClawClient::new(test_wallet(), ClientConfig::default()).unwrap();
+        assert!(client.cache.is_none());
+    }
+
+    #[test]
+    fn test_session_store_created_when_enabled() {
+        let config = ClientConfig {
+            enable_sessions: true,
+            ..ClientConfig::default()
+        };
+        let client = RustyClawClient::new(test_wallet(), config).unwrap();
+        assert!(client.session_store.is_some());
     }
 }
