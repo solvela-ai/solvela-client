@@ -1,3 +1,4 @@
+pub mod balance;
 #[allow(dead_code)]
 pub(crate) mod cache;
 pub mod client;
@@ -10,6 +11,7 @@ pub(crate) mod session;
 pub(crate) mod signer;
 pub mod wallet;
 
+pub use balance::BalanceMonitor;
 pub use client::RustyClawClient;
 pub use config::{ClientBuilder, ClientConfig};
 pub use error::{ClientError, SignerError, WalletError};
