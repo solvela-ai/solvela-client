@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+pub(crate) mod cache;
 pub mod client;
 pub mod config;
 pub mod error;
