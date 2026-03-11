@@ -1,12 +1,10 @@
 pub mod balance;
-#[allow(dead_code)]
 pub(crate) mod cache;
 pub mod client;
 pub mod config;
 pub mod error;
-#[allow(dead_code)]
 pub(crate) mod quality;
-#[allow(dead_code)]
+#[allow(dead_code)] // SessionInfo::escalated and cleanup_expired are reserved for future use
 pub(crate) mod session;
 pub(crate) mod signer;
 pub mod wallet;
