@@ -1,3 +1,5 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -5,15 +7,18 @@ use futures::stream::{self, Stream, StreamExt};
 use reqwest::StatusCode;
 use reqwest_eventsource::RequestBuilderExt;
 use solana_sdk::pubkey::Pubkey;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use rustyclaw_protocol::{
     ChatChunk, ChatMessage, ChatRequest, ChatResponse, CostBreakdown, ModelInfo, PaymentRequired,
     Role, USDC_MINT,
 };
 
+use crate::cache::ResponseCache;
 use crate::config::ClientConfig;
 use crate::error::ClientError;
+use crate::quality;
+use crate::session::SessionStore;
 use crate::signer;
 use crate::wallet::Wallet;
 
@@ -69,6 +74,10 @@ impl RustyClawClient {
 
     /// Send a chat completion request with transparent 402 payment handling.
     ///
+    /// Integrates smart features: response caching, free-tier fallback on zero
+    /// balance, session tracking (with three-strike escalation), and degraded
+    /// response detection with automatic retry.
+    ///
     /// # Errors
     ///
     /// Returns `ClientError::Gateway` for non-200/402 responses,
@@ -76,12 +85,80 @@ impl RustyClawClient {
     /// `ClientError::PaymentRejected` if the gateway rejects the payment.
     pub async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, ClientError> {
         let url = format!("{}/v1/chat/completions", self.config.gateway_url);
+        let mut effective_req = req.clone();
+        effective_req.stream = false;
 
-        // Probe with stream: false
-        let mut probe_req = req.clone();
-        probe_req.stream = false;
+        // --- Step 1: Cache check ---
+        let cache_key = if self.cache.is_some() {
+            let key = ResponseCache::cache_key(&effective_req.model, &effective_req.messages);
+            if let Some(cached) = self.cache.as_ref().and_then(|c| c.get(key)) {
+                debug!("cache hit for request");
+                return Ok(cached);
+            }
+            Some(key)
+        } else {
+            None
+        };
 
-        let probe_resp = self.http.post(&url).json(&probe_req).send().await?;
+        // --- Step 2: Balance guard (free fallback) ---
+        let used_fallback = if let Some(ref fallback_model) = self.config.free_fallback_model {
+            let balance_atomic = self.balance_state.load(Ordering::Relaxed);
+            if balance_atomic == 0 {
+                warn!(fallback_model = %fallback_model, "using free fallback (zero balance)");
+                effective_req.model = fallback_model.clone();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // --- Step 3: Session lookup ---
+        let session_id = if let Some(ref store) = self.session_store {
+            let sid = SessionStore::derive_session_id(&effective_req.messages);
+            let session = store.get_or_create(&sid, &effective_req.model).await;
+
+            // Use the session's model unless we already fell back to free tier
+            if !used_fallback {
+                effective_req.model.clone_from(&session.model);
+            }
+            Some(sid)
+        } else {
+            None
+        };
+
+        // --- Step 4: Send request (existing 402 handshake) ---
+        let response = self.send_chat_request(&url, &effective_req).await?;
+
+        // --- Step 5: Degraded detection ---
+        let response = if self.config.enable_quality_check {
+            self.retry_if_degraded(&url, &effective_req, response)
+                .await?
+        } else {
+            response
+        };
+
+        // --- Step 6: Cache store + session update ---
+        if let (Some(key), Some(ref cache)) = (cache_key, &self.cache) {
+            cache.put(key, response.clone());
+        }
+
+        if let (Some(ref sid), Some(ref store)) = (&session_id, &self.session_store) {
+            let content_hash = Self::hash_request_content(&effective_req);
+            store.record_request(sid, content_hash).await;
+        }
+
+        Ok(response)
+    }
+
+    /// Send a chat request, handling the 402 payment handshake if needed.
+    async fn send_chat_request(
+        &self,
+        url: &str,
+        req: &ChatRequest,
+    ) -> Result<ChatResponse, ClientError> {
+        let probe_resp = self.http.post(url).json(req).send().await?;
         let status = probe_resp.status();
 
         match status {
@@ -95,7 +172,7 @@ impl RustyClawClient {
                 let body = probe_resp.text().await?;
                 let payment_required: PaymentRequired = serde_json::from_str(&body)
                     .map_err(|e| ClientError::ParseError(format!("invalid 402 body: {e}")))?;
-                self.pay_and_resend(&url, &req, &payment_required).await
+                self.pay_and_resend(url, req, &payment_required).await
             }
             _ => {
                 let body = probe_resp.text().await.unwrap_or_default();
@@ -105,6 +182,72 @@ impl RustyClawClient {
                 })
             }
         }
+    }
+
+    /// Retry a request if the response is detected as degraded.
+    async fn retry_if_degraded(
+        &self,
+        url: &str,
+        req: &ChatRequest,
+        initial_response: ChatResponse,
+    ) -> Result<ChatResponse, ClientError> {
+        let mut response = initial_response;
+
+        for attempt in 0..self.config.max_quality_retries {
+            if let Some(reason) = quality::is_degraded(&response) {
+                warn!(
+                    reason = ?reason,
+                    attempt = attempt + 1,
+                    max = self.config.max_quality_retries,
+                    "degraded response detected, retrying"
+                );
+
+                let probe_resp = self
+                    .http
+                    .post(url)
+                    .header("X-RCR-Retry-Reason", "degraded")
+                    .json(req)
+                    .send()
+                    .await?;
+                let status = probe_resp.status();
+
+                response = match status {
+                    StatusCode::OK => {
+                        let body = probe_resp.text().await?;
+                        serde_json::from_str(&body)
+                            .map_err(|e| ClientError::ParseError(e.to_string()))?
+                    }
+                    StatusCode::PAYMENT_REQUIRED => {
+                        let body = probe_resp.text().await?;
+                        let payment_required: PaymentRequired = serde_json::from_str(&body)
+                            .map_err(|e| {
+                                ClientError::ParseError(format!("invalid 402 body: {e}"))
+                            })?;
+                        self.pay_and_resend(url, req, &payment_required).await?
+                    }
+                    _ => {
+                        let body = probe_resp.text().await.unwrap_or_default();
+                        return Err(ClientError::Gateway {
+                            status: status.as_u16(),
+                            message: body,
+                        });
+                    }
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(response)
+    }
+
+    /// Hash the content of all messages in a request for session tracking.
+    fn hash_request_content(req: &ChatRequest) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        for msg in &req.messages {
+            msg.content.hash(&mut hasher);
+        }
+        hasher.finish()
     }
 
     /// Send a streaming chat completion request with transparent 402 payment handling.
@@ -946,5 +1089,173 @@ data: [DONE]\n\n";
         };
         let client = RustyClawClient::new(test_wallet(), config).unwrap();
         assert!(client.session_store.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_chat_cache_hit_returns_cached_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_chat_response()))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                enable_cache: true,
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        let resp1 = client.chat(sample_chat_request()).await.unwrap();
+        assert_eq!(resp1.choices[0].message.content, "Hello! How can I help?");
+
+        // Second call should come from cache (mock expects exactly 1 call)
+        let resp2 = client.chat(sample_chat_request()).await.unwrap();
+        assert_eq!(resp2.choices[0].message.content, "Hello! How can I help?");
+    }
+
+    #[tokio::test]
+    async fn test_chat_free_fallback_on_zero_balance() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_chat_response()))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                free_fallback_model: Some("openai/gpt-oss-120b".to_string()),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        client
+            .balance_state
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+
+        let resp = client.chat(sample_chat_request()).await.unwrap();
+        assert_eq!(resp.choices[0].message.content, "Hello! How can I help?");
+    }
+
+    #[tokio::test]
+    async fn test_chat_no_fallback_when_balance_positive() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_chat_response()))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                free_fallback_model: Some("openai/gpt-oss-120b".to_string()),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        client
+            .balance_state
+            .store(5_000_000, std::sync::atomic::Ordering::Relaxed);
+
+        let resp = client.chat(sample_chat_request()).await.unwrap();
+        assert_eq!(resp.choices[0].message.content, "Hello! How can I help?");
+    }
+
+    #[tokio::test]
+    async fn test_chat_no_fallback_when_not_configured() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(sample_chat_response()))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        client
+            .balance_state
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+
+        let resp = client.chat(sample_chat_request()).await.unwrap();
+        assert_eq!(resp.choices[0].message.content, "Hello! How can I help?");
+    }
+
+    #[tokio::test]
+    async fn test_chat_degraded_retry() {
+        let mock_server = MockServer::start().await;
+
+        let degraded_response = ChatResponse {
+            id: "degraded".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1_000_000,
+            model: "test".to_string(),
+            choices: vec![ChatChoice {
+                index: 0,
+                message: ChatMessage {
+                    role: Role::Assistant,
+                    content: "As an AI language model, I can help you.".to_string(),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: None,
+        };
+
+        let good_response = sample_chat_response();
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&degraded_response))
+            .up_to_n_times(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&good_response))
+            .mount(&mock_server)
+            .await;
+
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                enable_quality_check: true,
+                max_quality_retries: 1,
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        let resp = client.chat(sample_chat_request()).await.unwrap();
+        assert_eq!(resp.choices[0].message.content, "Hello! How can I help?");
     }
 }
