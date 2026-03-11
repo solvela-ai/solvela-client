@@ -61,6 +61,7 @@ thiserror = "2"
 # Security
 zeroize = "1"
 dirs-next = "2"
+lru = "0.12"
 
 [workspace.lints.rust]
 unsafe_code = "warn"
