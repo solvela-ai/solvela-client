@@ -88,22 +88,13 @@ impl RustyClawClient {
         let mut effective_req = req.clone();
         effective_req.stream = false;
 
-        // --- Step 1: Cache check ---
-        let cache_key = if self.cache.is_some() {
-            let key = ResponseCache::cache_key(&effective_req.model, &effective_req.messages);
-            if let Some(cached) = self.cache.as_ref().and_then(|c| c.get(key)) {
-                debug!("cache hit for request");
-                return Ok(cached);
-            }
-            Some(key)
-        } else {
-            None
-        };
-
-        // --- Step 2: Balance guard (free fallback) ---
+        // --- Step 1: Balance guard (free fallback) ---
         let used_fallback = if let Some(ref fallback_model) = self.config.free_fallback_model {
             let balance_atomic = self.balance_state.load(Ordering::Relaxed);
-            if balance_atomic == 0 {
+            if balance_atomic == u64::MAX {
+                debug!("balance not yet polled; free fallback inactive");
+                false
+            } else if balance_atomic == 0 {
                 warn!(fallback_model = %fallback_model, "using free fallback (zero balance)");
                 effective_req.model = fallback_model.clone();
                 true
@@ -114,16 +105,29 @@ impl RustyClawClient {
             false
         };
 
-        // --- Step 3: Session lookup ---
+        // --- Step 2: Session lookup ---
         let session_id = if let Some(ref store) = self.session_store {
             let sid = SessionStore::derive_session_id(&effective_req.messages);
             let session = store.get_or_create(&sid, &effective_req.model).await;
+            // TODO: act on session.escalated (e.g., upgrade model tier or add X-RCR-Escalated header)
 
             // Use the session's model unless we already fell back to free tier
             if !used_fallback {
                 effective_req.model.clone_from(&session.model);
             }
             Some(sid)
+        } else {
+            None
+        };
+
+        // --- Step 3: Cache check (after model is finalized by Steps 1-2) ---
+        let cache_key = if self.cache.is_some() {
+            let key = ResponseCache::cache_key(&effective_req.model, &effective_req.messages);
+            if let Some(cached) = self.cache.as_ref().and_then(|c| c.get(key)) {
+                debug!("cache hit for request");
+                return Ok(cached);
+            }
+            Some(key)
         } else {
             None
         };
