@@ -256,6 +256,11 @@ impl RustyClawClient {
 
     /// Send a streaming chat completion request with transparent 402 payment handling.
     ///
+    /// Integrates smart features: free-tier fallback on zero balance and session
+    /// tracking. Cache and degraded detection are skipped for streaming because
+    /// caching a stream is complex and rarely beneficial, and degraded detection
+    /// requires the full response text.
+    ///
     /// Returns a `Stream` of `ChatChunk` items parsed from server-sent events.
     /// The stream terminates when the server sends `[DONE]`.
     ///
@@ -269,24 +274,57 @@ impl RustyClawClient {
         req: ChatRequest,
     ) -> Result<impl Stream<Item = Result<ChatChunk, ClientError>>, ClientError> {
         let url = format!("{}/v1/chat/completions", self.config.gateway_url);
+        let mut effective_req = req.clone();
+
+        // --- Step 1: Balance guard (free fallback) ---
+        let used_fallback = if let Some(ref fallback_model) = self.config.free_fallback_model {
+            let balance_atomic = self.balance_state.load(Ordering::Relaxed);
+            if balance_atomic == u64::MAX {
+                debug!("balance not yet polled; free fallback inactive");
+                false
+            } else if balance_atomic == 0 {
+                warn!(fallback_model = %fallback_model, "using free fallback (zero balance)");
+                effective_req.model = fallback_model.clone();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // --- Step 2: Session lookup ---
+        if let Some(ref store) = self.session_store {
+            let sid = SessionStore::derive_session_id(&effective_req.messages);
+            let session = store.get_or_create(&sid, &effective_req.model).await;
+
+            // Use the session's model unless we already fell back to free tier
+            if !used_fallback {
+                effective_req.model.clone_from(&session.model);
+            }
+
+            // --- Step 3: Session update before streaming ---
+            // Record the request hash now since we can't do it after (stream is lazy)
+            let content_hash = Self::hash_request_content(&effective_req);
+            store.record_request(&sid, content_hash).await;
+        }
 
         // Probe with stream: false to check payment status
-        let mut probe_req = req.clone();
+        let mut probe_req = effective_req.clone();
         probe_req.stream = false;
 
         let probe_resp = self.http.post(&url).json(&probe_req).send().await?;
         let status = probe_resp.status();
 
         // Build the streaming request based on probe result
-        let mut stream_req = req;
-        stream_req.stream = true;
+        effective_req.stream = true;
 
         let request_builder = match status {
             StatusCode::OK => {
                 debug!("gateway returned 200 directly (free/cached model), opening SSE stream");
                 // Discard probe body — we only needed the status
                 drop(probe_resp);
-                self.http.post(&url).json(&stream_req)
+                self.http.post(&url).json(&effective_req)
             }
             StatusCode::PAYMENT_REQUIRED => {
                 debug!("gateway returned 402, signing payment for stream");
@@ -299,7 +337,7 @@ impl RustyClawClient {
                 self.http
                     .post(&url)
                     .header("PAYMENT-SIGNATURE", &payment_header)
-                    .json(&stream_req)
+                    .json(&effective_req)
             }
             _ => {
                 let body = probe_resp.text().await.unwrap_or_default();
@@ -1261,5 +1299,45 @@ data: [DONE]\n\n";
 
         let resp = client.chat(sample_chat_request()).await.unwrap();
         assert_eq!(resp.choices[0].message.content, "Hello! How can I help?");
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_with_free_fallback() {
+        let mock_server = MockServer::start().await;
+
+        let sse_body = "\
+data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1234,\"model\":\"free-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Free\"},\"finish_reason\":null}]}\n\n\
+data: [DONE]\n\n";
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&mock_server)
+            .await;
+
+        let client = RustyClawClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                free_fallback_model: Some("openai/gpt-oss-120b".to_string()),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        client
+            .balance_state
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+
+        let stream = client.chat_stream(sample_chat_request()).await.unwrap();
+        let chunks: Vec<ChatChunk> = stream
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].choices[0].delta.content.as_deref(), Some("Free"));
     }
 }
