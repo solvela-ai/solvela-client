@@ -3,6 +3,8 @@ pub(crate) mod cache;
 pub mod client;
 pub mod config;
 pub mod error;
+#[allow(dead_code)]
+pub(crate) mod session;
 pub(crate) mod signer;
 pub mod wallet;
 
