@@ -1,0 +1,20 @@
+[package]
+name = "solvela-client-cli-args"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared CLI argument structs and wallet loading for Solvela binaries"
+
+[dependencies]
+clap = { workspace = true }
+solvela-client = { path = "../solvela-client" }
+dirs-next = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bs58 = { workspace = true }
+solana-sdk = { workspace = true }
+
+[lints]
+workspace = true
