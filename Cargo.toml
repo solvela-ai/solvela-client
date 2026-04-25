@@ -13,6 +13,9 @@ edition = "2021"
 rust-version = "1.75"
 license = "MIT"
 repository = "https://github.com/solvela-ai/solvela-client"
+authors = ["Solvela Contributors"]
+homepage = "https://solvela.ai"
+keywords = ["solana", "x402", "usdc", "payments", "llm"]
 
 [workspace.dependencies]
 # Protocol

@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
 description = "Localhost reverse proxy with transparent x402 USDC-SPL payment handling"
+categories = ["command-line-utilities", "web-programming::http-server"]
 
 [lib]
 name = "solvela_client_proxy"

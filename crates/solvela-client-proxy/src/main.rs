@@ -14,7 +14,7 @@ use solvela_client_cli_args::{load_wallet, GatewayArgs, RpcArgs, WalletArgs};
 /// Any OpenAI-compatible client can point at this proxy and get automatic
 /// Solana payment handling — no code changes needed.
 #[derive(Parser, Debug)]
-#[command(name = "rustyclawclient-proxy", version)]
+#[command(name = "solvela-client-proxy", version)]
 struct Cli {
     #[command(flatten)]
     wallet: WalletArgs,
