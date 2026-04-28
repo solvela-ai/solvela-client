@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_wallet_from_env_not_set() {
-        let result = Wallet::from_env("RUSTYCLAW_TEST_NONEXISTENT_VAR_12345");
+        let result = Wallet::from_env("SOLVELA_TEST_NONEXISTENT_VAR_12345");
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), WalletError::EnvNotSet(_)));
     }

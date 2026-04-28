@@ -48,7 +48,7 @@ async fn main() {
 
     // Initialize tracing
     let filter = if cli.verbose {
-        "solvela_client_proxy=debug,rustyclaw_client=debug,tower_http=debug"
+        "solvela_client_proxy=debug,solvela_client=debug,tower_http=debug"
     } else {
         "solvela_client_proxy=info,tower_http=info"
     };
@@ -123,7 +123,7 @@ async fn main() {
     let addr = SocketAddr::from(([127, 0, 0, 1], cli.port));
     info!(
         addr = %addr,
-        "rustyclawclient-proxy started — forwarding to gateway"
+        "solvela-client-proxy started — forwarding to gateway"
     );
 
     let listener = tokio::net::TcpListener::bind(addr)

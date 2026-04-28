@@ -51,7 +51,7 @@ cargo fmt --all -- --check        # CI mode
 
 ### Dependencies
 
-Depends on `rustyclaw-protocol` (path dep to `../SolvelaRouter/crates/protocol`).
+Depends on `solvela-protocol` (path dep to `../solvela/crates/protocol`).
 
 ## Code Conventions
 

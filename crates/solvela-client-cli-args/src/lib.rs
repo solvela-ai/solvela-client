@@ -14,11 +14,11 @@ use solvela_client::Wallet;
 #[derive(Debug, Clone, Args)]
 pub struct WalletArgs {
     /// Environment variable containing a base58-encoded keypair.
-    #[arg(long, default_value = "RUSTYCLAW_WALLET_KEY")]
+    #[arg(long, default_value = "SOLVELA_WALLET_KEY")]
     pub wallet_env: String,
 
     /// Path to wallet keypair file (Solana CLI JSON byte-array format).
-    #[arg(long, default_value = "~/.rustyclaw/wallet.json")]
+    #[arg(long, default_value = "~/.solvela/wallet.json")]
     pub wallet_file: String,
 }
 
@@ -29,7 +29,7 @@ pub struct GatewayArgs {
     #[arg(
         short = 'g',
         long,
-        default_value = "https://rustyclawrouter-gateway.fly.dev"
+        default_value = "https://api.solvela.ai"
     )]
     pub gateway: String,
 }
@@ -203,7 +203,7 @@ mod tests {
         let expected_addr = kp.pubkey().to_string();
 
         // Use a unique env var name to avoid conflicts with parallel tests
-        let env_var = "RUSTYCLAW_TEST_WALLET_LOAD_ENV_7291";
+        let env_var = "SOLVELA_TEST_WALLET_LOAD_ENV_7291";
         std::env::set_var(env_var, &b58);
 
         let args = WalletArgs {
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn test_load_wallet_no_source() {
         // Ensure env var is not set
-        let env_var = "RUSTYCLAW_TEST_WALLET_NOSOURCE_4821";
+        let env_var = "SOLVELA_TEST_WALLET_NOSOURCE_4821";
         std::env::remove_var(env_var);
 
         let args = WalletArgs {
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_save_wallet_creates_file() {
-        let dir = std::env::temp_dir().join("rustyclaw_test_save_wallet");
+        let dir = std::env::temp_dir().join("solvela_test_save_wallet");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_save_wallet_refuses_overwrite() {
-        let dir = std::env::temp_dir().join("rustyclaw_test_save_overwrite");
+        let dir = std::env::temp_dir().join("solvela_test_save_overwrite");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
