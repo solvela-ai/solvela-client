@@ -1,6 +1,7 @@
+!.env.example
+*.key
+*.pem
+.env*
+.mcp.json
 /target
 Cargo.lock
-.env*
-*.pem
-*.key
-!.env.example
