@@ -7,7 +7,7 @@ repository.workspace = true
 authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-description = "Solana-native AI agent payment client for SolvelaRouter"
+description = "Solana-native AI agent payment client for Solvela"
 categories = ["api-bindings", "cryptography::cryptocurrencies"]
 
 [dependencies]

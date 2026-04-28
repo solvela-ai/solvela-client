@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Solvela Client is a Rust workspace for making paid LLM API calls through a SolvelaRouter gateway. AI agents use this to hold a Solana wallet, sign USDC-SPL payments, and transparently handle the x402 402-payment handshake.
+Solvela Client is a Rust workspace for making paid LLM API calls through a Solvela gateway. AI agents use this to hold a Solana wallet, sign USDC-SPL payments, and transparently handle the x402 402-payment handshake.
 
 Phases A–E complete. Core library, CLI, shared args, and HTTP proxy all functional.
 
