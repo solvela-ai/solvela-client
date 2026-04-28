@@ -4,7 +4,7 @@
 
 Solvela Client is a Rust workspace for making paid LLM API calls through a Solvela gateway. AI agents use this to hold a Solana wallet, sign USDC-SPL payments, and transparently handle the x402 402-payment handshake.
 
-Phases A–E complete. Core library, CLI, shared args, and HTTP proxy all functional.
+Status: pre-1.0 release; expect breaking changes between minor versions until 1.0.
 
 ## Build & Test Commands
 
@@ -16,12 +16,12 @@ cargo check                       # fast type check
 cargo build                       # debug build
 cargo build --release             # release build
 
-# Test (121 tests total)
+# Test — run `cargo test` for current counts
 cargo test                        # all workspace tests
-cargo test -p solvela-client    # 93 unit + 9 integration
-cargo test -p solvela-client-cli # 5 tests
-cargo test -p solvela-client-cli-args  # 6 tests
-cargo test -p solvela-client-proxy     # 7 integration + 1 unit
+cargo test -p solvela-client      # unit + integration
+cargo test -p solvela-client-cli  # CLI tests
+cargo test -p solvela-client-cli-args  # args tests
+cargo test -p solvela-client-proxy     # proxy tests
 
 # Lint
 cargo fmt --all && cargo clippy --all-targets --all-features -- -D warnings
@@ -51,11 +51,11 @@ cargo fmt --all -- --check        # CI mode
 
 ### Dependencies
 
-Depends on `solvela-protocol` (path dep to `../solvela/crates/protocol`).
+Depends on `solvela-protocol = "0.1"` from crates.io.
 
 ## Code Conventions
 
-- Edition 2021 (required for solana-sdk 2.2 compatibility — exception to global 2024 default)
+- Edition 2021
 - thiserror for all error enums
 - Never unwrap() in library code — propagate with ?
 - Custom Debug redacts all secrets (wallet keys)
