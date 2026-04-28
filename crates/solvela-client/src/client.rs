@@ -22,7 +22,7 @@ use crate::session::SessionStore;
 use crate::signer;
 use crate::wallet::Wallet;
 
-/// Client for interacting with a `RustyClawRouter` gateway.
+/// Client for interacting with a `Solvela` gateway.
 ///
 /// Handles the x402 payment handshake transparently: sends a probe request,
 /// and if the gateway returns 402, signs a payment transaction and retries.
@@ -109,7 +109,7 @@ impl SolvelaClient {
         let session_id = if let Some(ref store) = self.session_store {
             let sid = SessionStore::derive_session_id(&effective_req.messages);
             let session = store.get_or_create(&sid, &effective_req.model).await;
-            // TODO: act on session.escalated (e.g., upgrade model tier or add X-RCR-Escalated header)
+            // TODO: act on session.escalated (e.g., upgrade model tier or add X-Solvela-Escalated header)
 
             // Use the session's model unless we already fell back to free tier
             if !used_fallback {
@@ -209,7 +209,7 @@ impl SolvelaClient {
                 let probe_resp = self
                     .http
                     .post(url)
-                    .header("X-RCR-Retry-Reason", "degraded")
+                    .header("X-Solvela-Retry-Reason", "degraded")
                     .json(req)
                     .send()
                     .await?;
