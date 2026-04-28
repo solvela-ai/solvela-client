@@ -14,8 +14,8 @@ pub async fn run(
         .gateway_url(&gateway_args.gateway)
         .build_config();
 
-    let client = SolvelaClient::new(wallet, config)
-        .map_err(|e| format!("failed to create client: {e}"))?;
+    let client =
+        SolvelaClient::new(wallet, config).map_err(|e| format!("failed to create client: {e}"))?;
 
     let mut models = client
         .models()

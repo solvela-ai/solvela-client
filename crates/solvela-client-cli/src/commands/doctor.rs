@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use solvela_client::{ClientBuilder, SolvelaClient, Wallet};
-use solvela_protocol::PaymentRequired;
 use solvela_client_cli_args::{load_wallet, GatewayArgs, RpcArgs, WalletArgs};
+use solvela_protocol::PaymentRequired;
 
 pub async fn run(
     wallet_args: &WalletArgs,

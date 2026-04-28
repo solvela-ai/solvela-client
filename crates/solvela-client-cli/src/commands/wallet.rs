@@ -115,8 +115,8 @@ async fn balance(
         .rpc_url(&rpc_args.rpc_url)
         .build_config();
 
-    let client = SolvelaClient::new(wallet, config)
-        .map_err(|e| format!("failed to create client: {e}"))?;
+    let client =
+        SolvelaClient::new(wallet, config).map_err(|e| format!("failed to create client: {e}"))?;
 
     let balance = client
         .usdc_balance()

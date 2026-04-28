@@ -4,8 +4,8 @@ use std::pin::pin;
 use futures::StreamExt;
 
 use solvela_client::{ClientBuilder, SolvelaClient};
-use solvela_protocol::{ChatMessage, ChatRequest, Role};
 use solvela_client_cli_args::{load_wallet, GatewayArgs, RpcArgs, WalletArgs};
+use solvela_protocol::{ChatMessage, ChatRequest, Role};
 
 pub async fn run(
     prompt: &str,
@@ -28,8 +28,8 @@ pub async fn run(
 
     let config = builder.build_config();
 
-    let client = SolvelaClient::new(wallet, config)
-        .map_err(|e| format!("failed to create client: {e}"))?;
+    let client =
+        SolvelaClient::new(wallet, config).map_err(|e| format!("failed to create client: {e}"))?;
 
     let req = ChatRequest {
         model: model.to_string(),

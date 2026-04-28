@@ -26,11 +26,7 @@ pub struct WalletArgs {
 #[derive(Debug, Clone, Args)]
 pub struct GatewayArgs {
     /// Gateway URL to forward requests to.
-    #[arg(
-        short = 'g',
-        long,
-        default_value = "https://api.solvela.ai"
-    )]
+    #[arg(short = 'g', long, default_value = "https://api.solvela.ai")]
     pub gateway: String,
 }
 
