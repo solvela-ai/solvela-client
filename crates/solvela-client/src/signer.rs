@@ -18,6 +18,8 @@ const ASSOCIATED_TOKEN_PROGRAM_ID: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNs
 
 /// Compute the associated token address for a wallet and mint.
 pub(crate) fn associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
+    // SAFETY: ASSOCIATED_TOKEN_PROGRAM_ID is a compile-time constant string;
+    // its base58 form is verified valid by the SPL spec and exercised by tests.
     let ata_program: Pubkey = ASSOCIATED_TOKEN_PROGRAM_ID
         .parse()
         .expect("ATA program ID is valid");

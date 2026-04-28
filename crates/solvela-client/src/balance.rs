@@ -123,6 +123,8 @@ impl BalanceMonitor {
                 return;
             }
         };
+        // SAFETY: USDC_MINT is a compile-time constant from solvela-protocol;
+        // base58 validity is enforced at the source.
         let mint: Pubkey = USDC_MINT
             .parse()
             .expect("USDC_MINT is a compile-time constant and must be a valid pubkey");

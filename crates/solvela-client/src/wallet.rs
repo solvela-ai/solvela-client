@@ -27,10 +27,14 @@ impl Wallet {
     /// which should not occur under normal conditions.
     #[must_use]
     pub fn create() -> (Self, String) {
+        // SAFETY: BIP39 12-word generation draws from system entropy and is
+        // infallible in practice; no precondition can cause it to fail.
         let mnemonic = Mnemonic::generate(12).expect("mnemonic generation should not fail");
         let phrase = mnemonic.to_string();
         let seed = mnemonic.to_seed("");
         let kp_bytes = keypair_bytes_from_seed(&seed);
+        // SAFETY: `keypair_bytes_from_seed` always returns a valid 64-byte
+        // Ed25519 keypair derived from a well-formed BIP39 seed.
         let keypair = Keypair::try_from(kp_bytes.as_slice())
             .expect("keypair from valid seed should not fail");
         (Self { keypair }, phrase)
@@ -105,7 +109,7 @@ impl Wallet {
     }
 
     /// Sign a message, returning a Solana `Signature`.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // used in tests only; reserved for future message-signing API
     pub(crate) fn sign(&self, message: &[u8]) -> Signature {
         self.keypair.sign_message(message)
     }
@@ -127,7 +131,6 @@ impl Wallet {
     }
 
     /// Access the inner keypair for transaction signing.
-    #[allow(dead_code)]
     pub(crate) fn keypair(&self) -> &Keypair {
         &self.keypair
     }
@@ -154,6 +157,8 @@ impl Drop for Wallet {
 /// Derive a 64-byte keypair (secret || public) from the first 32 bytes of a BIP39 seed.
 fn keypair_bytes_from_seed(seed: &[u8]) -> [u8; 64] {
     let secret = &seed[..32];
+    // SAFETY: BIP39 seeds are always ≥64 bytes; the first 32 bytes are a
+    // valid Ed25519 secret key. The `try_into` to `[u8; 32]` cannot fail.
     let signing_key = ed25519_dalek::SigningKey::from_bytes(
         secret.try_into().expect("seed should be at least 32 bytes"),
     );
