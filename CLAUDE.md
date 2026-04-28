@@ -33,7 +33,7 @@ cargo fmt --all -- --check        # CI mode
 ### Workspace Crates (`crates/`)
 
 - **solvela-client** — Core library. Wallet management (BIP39 create/import, zeroize on drop), x402 payment signing, transparent 402 handshake, and 5 smart features (response cache, session sticking, balance monitoring, degraded detection, free tier fallback).
-- **solvela-client-cli** (`solvela`) — CLI binary. Wallet ops (create, import, balance, address, export), streaming chat completions, model browsing with filtering, diagnostics (doctor command).
+- **solvela-client-cli** (`solvela-client`) — CLI binary. Wallet ops (create, import, balance, address, export), streaming chat completions, model browsing with filtering, diagnostics (doctor command). Note: the binary is intentionally named `solvela-client` to avoid colliding with the monorepo's `solvela-cli` crate (which produces a binary named `solvela`).
 - **solvela-client-cli-args** — Shared clap Args structs (WalletArgs, GatewayArgs, RpcArgs) used by both CLI and proxy.
 - **solvela-client-proxy** — HTTP reverse proxy. Localhost x402 interceptor with transparent payment handling for existing LLM tools.
 

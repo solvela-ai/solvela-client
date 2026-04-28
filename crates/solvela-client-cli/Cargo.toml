@@ -7,11 +7,11 @@ repository.workspace = true
 authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-description = "solvela — Solvela CLI for Solana-paid AI from your terminal"
+description = "solvela-client — Solvela agent-side payer CLI for Solana-paid AI from your terminal"
 categories = ["command-line-utilities"]
 
 [[bin]]
-name = "solvela"
+name = "solvela-client"
 path = "src/main.rs"
 
 [dependencies]

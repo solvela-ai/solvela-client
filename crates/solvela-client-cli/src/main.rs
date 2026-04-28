@@ -5,9 +5,9 @@ use solvela_client_cli_args::{GatewayArgs, RpcArgs, WalletArgs};
 
 mod commands;
 
-/// solvela — `SolvelaClient` CLI for Solana-paid AI from your terminal.
+/// solvela-client — agent-side payer CLI for Solana-paid AI from your terminal.
 #[derive(Debug, Parser)]
-#[command(name = "solvela", version, about, long_about = None)]
+#[command(name = "solvela-client", version, about, long_about = None)]
 struct Cli {
     #[command(flatten)]
     gateway: GatewayArgs,
