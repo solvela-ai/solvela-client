@@ -19,7 +19,7 @@ keywords = ["solana", "x402", "usdc", "payments", "llm"]
 
 [workspace.dependencies]
 # Protocol
-solvela-protocol = { path = "../solvela/crates/protocol" }
+solvela-protocol = "0.1"
 
 # Solana
 solana-sdk = "2.2"
