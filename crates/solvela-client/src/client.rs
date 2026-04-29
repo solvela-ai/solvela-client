@@ -525,7 +525,9 @@ impl SolvelaClient {
         &self,
         payment_required: &PaymentRequired,
     ) -> Result<String, ClientError> {
-        let (header, _amount) = self.sign_payment_for_402_with_amount(payment_required).await?;
+        let (header, _amount) = self
+            .sign_payment_for_402_with_amount(payment_required)
+            .await?;
         Ok(header)
     }
 

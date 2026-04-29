@@ -58,7 +58,7 @@ impl Default for ClientConfig {
             max_payment_amount: Some(DEFAULT_MAX_PAYMENT_AMOUNT_ATOMIC),
             enable_cache: false,
             enable_sessions: false,
-            session_ttl: Duration::from_secs(30 * 60),
+            session_ttl: Duration::from_secs(1800),
             enable_quality_check: false,
             max_quality_retries: 1,
             free_fallback_model: None,
