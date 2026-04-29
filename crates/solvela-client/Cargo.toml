@@ -29,6 +29,7 @@ thiserror = { workspace = true }
 zeroize = { workspace = true }
 ed25519-dalek = { workspace = true }
 lru = { workspace = true }
+ahash = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"

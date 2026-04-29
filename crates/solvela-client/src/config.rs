@@ -1,5 +1,13 @@
 use std::time::Duration;
 
+/// Default maximum payment amount in atomic USDC units (10 USDC).
+///
+/// This is a conservative default to bound exposure to overcharge attacks
+/// from malicious or buggy gateways. Callers expecting larger per-request
+/// payments must opt in by setting `max_payment_amount` explicitly
+/// (HIGH-2 from the security audit).
+pub const DEFAULT_MAX_PAYMENT_AMOUNT_ATOMIC: u64 = 10_000_000;
+
 /// Configuration for the `SolvelaClient`.
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_excessive_bools)]
@@ -45,7 +53,9 @@ impl Default for ClientConfig {
             prefer_escrow: false,
             timeout: Duration::from_secs(180),
             expected_recipient: None,
-            max_payment_amount: None,
+            // HIGH-2: cap payments at 10 USDC by default. Callers wanting a
+            // higher limit must opt out explicitly via the builder.
+            max_payment_amount: Some(DEFAULT_MAX_PAYMENT_AMOUNT_ATOMIC),
             enable_cache: false,
             enable_sessions: false,
             session_ttl: Duration::from_secs(30 * 60),
@@ -258,10 +268,16 @@ mod tests {
     }
 
     #[test]
-    fn test_default_config_security_fields_none() {
+    fn test_default_config_security_defaults() {
+        // HIGH-2: max_payment_amount defaults to a 10 USDC cap.
+        // expected_recipient remains opt-in; callers receive a startup warn
+        // (emitted in `SolvelaClient::new`) when it is unset.
         let config = ClientConfig::default();
         assert!(config.expected_recipient.is_none());
-        assert!(config.max_payment_amount.is_none());
+        assert_eq!(
+            config.max_payment_amount,
+            Some(DEFAULT_MAX_PAYMENT_AMOUNT_ATOMIC)
+        );
     }
 
     #[test]
