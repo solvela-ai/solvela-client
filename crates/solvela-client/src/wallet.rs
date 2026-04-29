@@ -63,8 +63,7 @@ impl Wallet {
         let kp_bytes = keypair_bytes_from_seed(&seed);
         // SAFETY: `keypair_bytes_from_seed` always returns a valid 64-byte
         // Ed25519 keypair derived from a well-formed BIP39 seed.
-        Keypair::try_from(kp_bytes.as_slice())
-            .expect("keypair from valid seed should not fail");
+        Keypair::try_from(kp_bytes.as_slice()).expect("keypair from valid seed should not fail");
         (Self::from_validated_bytes(kp_bytes), phrase)
     }
 
