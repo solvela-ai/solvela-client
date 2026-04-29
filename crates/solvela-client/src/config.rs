@@ -51,14 +51,14 @@ impl Default for ClientConfig {
             gateway_url: "http://localhost:8402".to_string(),
             rpc_url: "https://api.mainnet-beta.solana.com".to_string(),
             prefer_escrow: false,
-            timeout: Duration::from_secs(180),
+            timeout: Duration::from_mins(3),
             expected_recipient: None,
             // HIGH-2: cap payments at 10 USDC by default. Callers wanting a
             // higher limit must opt out explicitly via the builder.
             max_payment_amount: Some(DEFAULT_MAX_PAYMENT_AMOUNT_ATOMIC),
             enable_cache: false,
             enable_sessions: false,
-            session_ttl: Duration::from_secs(30 * 60),
+            session_ttl: Duration::from_mins(30),
             enable_quality_check: false,
             max_quality_retries: 1,
             free_fallback_model: None,
