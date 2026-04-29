@@ -44,13 +44,12 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      # Dry-run all four — fails fast before spending any publish slots
-      - name: Dry-run all crates
-        run: |
-          cargo publish --dry-run -p solvela-client
-          cargo publish --dry-run -p solvela-client-cli-args
-          cargo publish --dry-run -p solvela-client-cli
-          cargo publish --dry-run -p solvela-client-proxy
+      # Dry-run the leaf crate only. Downstream crates (cli-args, cli, proxy)
+      # depend on solvela-client, so their dry-run only works after the leaf
+      # is on the crates.io index. The actual `cargo publish` steps below
+      # implicitly perform the verification build that dry-run would do.
+      - name: Dry-run solvela-client
+        run: cargo publish --dry-run -p solvela-client
 
       - name: Publish solvela-client
         run: cargo publish -p solvela-client
