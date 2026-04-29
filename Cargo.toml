@@ -67,6 +67,11 @@ zeroize = "1"
 dirs-next = "2"
 lru = "0.12"
 
+# Hashing — stable, deterministic, fast (used for cache keys / session digests).
+# DefaultHasher is randomized per-process and SipHash is slower than necessary
+# for non-cryptographic in-memory keys, so we use AHash explicitly.
+ahash = "0.8"
+
 [workspace.lints.rust]
 unsafe_code = "warn"
 

@@ -1,8 +1,8 @@
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use ahash::AHasher;
 use futures::stream::{self, Stream, StreamExt};
 use reqwest::StatusCode;
 use reqwest_eventsource::RequestBuilderExt;
@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 
 use solvela_protocol::{
     ChatChunk, ChatMessage, ChatRequest, ChatResponse, CostBreakdown, ModelInfo, PaymentRequired,
-    Role, USDC_MINT,
+    Role, SOLANA_NETWORK, USDC_MINT,
 };
 
 use crate::cache::ResponseCache;
@@ -49,6 +49,17 @@ impl SolvelaClient {
             .timeout(config.timeout)
             .build()
             .map_err(|e| ClientError::Config(format!("failed to build HTTP client: {e}")))?;
+
+        // HIGH-2: surface a warning when the client is constructed without an
+        // expected recipient. Without it, the client cannot detect a malicious
+        // gateway redirecting payments to an attacker-controlled wallet.
+        if config.expected_recipient.is_none() {
+            warn!(
+                "SolvelaClient created without `expected_recipient`; \
+                 payment redirect attacks by a malicious gateway cannot be detected. \
+                 Set ClientBuilder::expected_recipient to the trusted gateway wallet."
+            );
+        }
 
         let cache = if config.enable_cache {
             Some(crate::cache::ResponseCache::new())
@@ -133,11 +144,11 @@ impl SolvelaClient {
         };
 
         // --- Step 4: Send request (existing 402 handshake) ---
-        let response = self.send_chat_request(&url, &effective_req).await?;
+        let (response, paid_atomic) = self.send_chat_request(&url, &effective_req).await?;
 
         // --- Step 5: Degraded detection ---
         let response = if self.config.enable_quality_check {
-            self.retry_if_degraded(&url, &effective_req, response)
+            self.retry_if_degraded(&url, &effective_req, response, paid_atomic)
                 .await?
         } else {
             response
@@ -157,11 +168,15 @@ impl SolvelaClient {
     }
 
     /// Send a chat request, handling the 402 payment handshake if needed.
+    ///
+    /// Returns the response and the atomic USDC amount paid (0 if the gateway
+    /// returned 200 directly, e.g. for a free/cached model). Callers use the
+    /// paid amount to enforce per-request cumulative budget caps (LOW-1).
     async fn send_chat_request(
         &self,
         url: &str,
         req: &ChatRequest,
-    ) -> Result<ChatResponse, ClientError> {
+    ) -> Result<(ChatResponse, u64), ClientError> {
         let probe_resp = self.http.post(url).json(req).send().await?;
         let status = probe_resp.status();
 
@@ -169,14 +184,17 @@ impl SolvelaClient {
             StatusCode::OK => {
                 debug!("gateway returned 200 directly (free/cached model)");
                 let body = probe_resp.text().await?;
-                serde_json::from_str(&body).map_err(|e| ClientError::ParseError(e.to_string()))
+                let parsed: ChatResponse = serde_json::from_str(&body)
+                    .map_err(|e| ClientError::ParseError(e.to_string()))?;
+                Ok((parsed, 0))
             }
             StatusCode::PAYMENT_REQUIRED => {
                 debug!("gateway returned 402, initiating payment");
                 let body = probe_resp.text().await?;
                 let payment_required: PaymentRequired = serde_json::from_str(&body)
                     .map_err(|e| ClientError::ParseError(format!("invalid 402 body: {e}")))?;
-                self.pay_and_resend(url, req, &payment_required).await
+                self.pay_and_resend_with_amount(url, req, &payment_required)
+                    .await
             }
             _ => {
                 let body = probe_resp.text().await.unwrap_or_default();
@@ -189,13 +207,23 @@ impl SolvelaClient {
     }
 
     /// Retry a request if the response is detected as degraded.
+    ///
+    /// `initial_paid_atomic` is the amount (atomic USDC) already spent by
+    /// `send_chat_request` for the original attempt. Each retry that triggers
+    /// a 402 handshake adds to a running total; if the total exceeds
+    /// `config.max_payment_amount`, the retry loop short-circuits with
+    /// `ClientError::BudgetExceeded` so a degraded model can't drain the
+    /// caller's wallet via repeated payments (LOW-1).
     async fn retry_if_degraded(
         &self,
         url: &str,
         req: &ChatRequest,
         initial_response: ChatResponse,
+        initial_paid_atomic: u64,
     ) -> Result<ChatResponse, ClientError> {
         let mut response = initial_response;
+        let mut total_paid_atomic: u64 = initial_paid_atomic;
+        let cap = self.config.max_payment_amount;
 
         for attempt in 0..self.config.max_quality_retries {
             if let Some(reason) = quality::is_degraded(&response) {
@@ -203,6 +231,7 @@ impl SolvelaClient {
                     reason = ?reason,
                     attempt = attempt + 1,
                     max = self.config.max_quality_retries,
+                    total_paid_atomic,
                     "degraded response detected, retrying"
                 );
 
@@ -227,7 +256,19 @@ impl SolvelaClient {
                             .map_err(|e| {
                                 ClientError::ParseError(format!("invalid 402 body: {e}"))
                             })?;
-                        self.pay_and_resend(url, req, &payment_required).await?
+                        let (paid_resp, paid_amount) = self
+                            .pay_and_resend_with_amount(url, req, &payment_required)
+                            .await?;
+                        total_paid_atomic = total_paid_atomic.saturating_add(paid_amount);
+                        if let Some(max) = cap {
+                            if total_paid_atomic > max {
+                                return Err(ClientError::BudgetExceeded {
+                                    spent: total_paid_atomic,
+                                    cap: max,
+                                });
+                            }
+                        }
+                        paid_resp
                     }
                     _ => {
                         let body = probe_resp.text().await.unwrap_or_default();
@@ -246,8 +287,10 @@ impl SolvelaClient {
     }
 
     /// Hash the content of all messages in a request for session tracking.
+    ///
+    /// Uses `AHash` for stable, deterministic per-request digests (MEDIUM-2).
     fn hash_request_content(req: &ChatRequest) -> u64 {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = AHasher::default();
         for msg in &req.messages {
             msg.content.hash(&mut hasher);
         }
@@ -482,6 +525,17 @@ impl SolvelaClient {
         &self,
         payment_required: &PaymentRequired,
     ) -> Result<String, ClientError> {
+        let (header, _amount) = self.sign_payment_for_402_with_amount(payment_required).await?;
+        Ok(header)
+    }
+
+    /// Internal variant of `sign_payment_for_402` that also returns the atomic
+    /// USDC amount that was signed for, so callers can track cumulative spend
+    /// (LOW-1) across multi-step request flows like `retry_if_degraded`.
+    async fn sign_payment_for_402_with_amount(
+        &self,
+        payment_required: &PaymentRequired,
+    ) -> Result<(String, u64), ClientError> {
         let accept = self
             .pick_scheme(&payment_required.accepts)
             .ok_or(ClientError::NoCompatibleScheme)?;
@@ -521,16 +575,22 @@ impl SolvelaClient {
         .await?;
 
         let payload = signer::build_payment_payload(&payment_required.resource, accept, &signed_tx);
-        Ok(signer::encode_payment_header(&payload))
+        Ok((signer::encode_payment_header(&payload), amount_atomic))
     }
 
-    async fn pay_and_resend(
+    /// Sign a payment for `payment_required`, send the paid request, and
+    /// return both the response and the atomic USDC amount that was paid.
+    /// Callers tracking cumulative spend (LOW-1) use the returned amount to
+    /// enforce a per-request budget.
+    async fn pay_and_resend_with_amount(
         &self,
         url: &str,
         req: &ChatRequest,
         payment_required: &PaymentRequired,
-    ) -> Result<ChatResponse, ClientError> {
-        let payment_header = self.sign_payment_for_402(payment_required).await?;
+    ) -> Result<(ChatResponse, u64), ClientError> {
+        let (payment_header, amount_atomic) = self
+            .sign_payment_for_402_with_amount(payment_required)
+            .await?;
 
         debug!("sending paid request");
 
@@ -547,7 +607,9 @@ impl SolvelaClient {
 
         match status {
             StatusCode::OK => {
-                serde_json::from_str(&body).map_err(|e| ClientError::ParseError(e.to_string()))
+                let parsed: ChatResponse = serde_json::from_str(&body)
+                    .map_err(|e| ClientError::ParseError(e.to_string()))?;
+                Ok((parsed, amount_atomic))
             }
             StatusCode::PAYMENT_REQUIRED => Err(ClientError::PaymentRejected(body)),
             _ => Err(ClientError::Gateway {
@@ -653,14 +715,22 @@ impl SolvelaClient {
     /// is not yet implemented — escrow schemes are filtered out even when
     /// `prefer_escrow` is true. Once `sign_escrow_payment` is added, this
     /// method should respect `config.prefer_escrow` ordering.
+    ///
+    /// Security: validates `network` and `asset` in addition to `scheme` so
+    /// that a malicious gateway cannot trick the client into signing a
+    /// payment on an unexpected chain or in an unexpected token (HIGH-1).
     fn pick_scheme<'a>(
         &self,
         accepts: &'a [solvela_protocol::PaymentAccept],
     ) -> Option<&'a solvela_protocol::PaymentAccept> {
         // TODO: respect self.config.prefer_escrow once escrow signing is implemented
         let _ = self.config.prefer_escrow;
-        // Only exact scheme is implemented; escrow signing is not yet available
-        accepts.iter().find(|a| a.scheme == "exact")
+        // Only exact scheme is implemented; escrow signing is not yet available.
+        // Reject any accept whose network or asset doesn't match Solana mainnet
+        // USDC-SPL — the only combination this client can sign for.
+        accepts
+            .iter()
+            .find(|a| a.scheme == "exact" && a.network == SOLANA_NETWORK && a.asset == USDC_MINT)
     }
 }
 
@@ -894,6 +964,53 @@ mod tests {
 
         let mut pr = sample_payment_required();
         pr.accepts[0].scheme = "unknown".to_string();
+
+        let result = client.sign_payment_for_402(&pr).await;
+        assert!(matches!(
+            result.unwrap_err(),
+            ClientError::NoCompatibleScheme
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sign_payment_for_402_rejects_wrong_network() {
+        // HIGH-1: pick_scheme must reject accepts whose network is not Solana.
+        let mock_server = MockServer::start().await;
+        let client = SolvelaClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        let mut pr = sample_payment_required();
+        pr.accepts[0].network = "ethereum:1".to_string();
+
+        let result = client.sign_payment_for_402(&pr).await;
+        assert!(matches!(
+            result.unwrap_err(),
+            ClientError::NoCompatibleScheme
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sign_payment_for_402_rejects_wrong_asset() {
+        // HIGH-1: pick_scheme must reject accepts whose asset is not USDC mint.
+        let mock_server = MockServer::start().await;
+        let client = SolvelaClient::new(
+            test_wallet(),
+            ClientConfig {
+                gateway_url: mock_server.uri(),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
+
+        let mut pr = sample_payment_required();
+        // Replace asset with a different (well-formed but wrong) mint.
+        pr.accepts[0].asset = solana_sdk::pubkey::Pubkey::new_unique().to_string();
 
         let result = client.sign_payment_for_402(&pr).await;
         assert!(matches!(

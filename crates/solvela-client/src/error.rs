@@ -71,6 +71,9 @@ pub enum ClientError {
     #[error("payment amount {amount} exceeds maximum allowed {max}")]
     AmountExceedsMax { amount: u64, max: u64 },
 
+    #[error("cumulative payments {spent} atomic exceed budget {cap} atomic for this request")]
+    BudgetExceeded { spent: u64, cap: u64 },
+
     #[error("client configuration error: {0}")]
     Config(String),
 

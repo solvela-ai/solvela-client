@@ -5,7 +5,7 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use solana_sdk::signer::keypair::Keypair;
 use solana_sdk::signer::Signer;
-use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 use crate::error::WalletError;
 
@@ -13,11 +13,39 @@ use crate::error::WalletError;
 ///
 /// Provides BIP39 mnemonic creation/import, base58 keypair import,
 /// env-var import, signing, and secure key zeroization on drop.
+///
+/// The raw 64-byte keypair (secret || public) is stored in a
+/// `Zeroizing<[u8; 64]>` so that the secret key material is wiped from
+/// memory when the wallet is dropped (MEDIUM-1 from the security audit).
+/// `solana_sdk::Keypair` does not expose its internal buffer mutably, so
+/// we keep the source of truth in our owned buffer and reconstruct the
+/// `Keypair` on demand.
 pub struct Wallet {
-    keypair: Keypair,
+    keypair_bytes: Zeroizing<[u8; 64]>,
 }
 
 impl Wallet {
+    /// Construct a `Wallet` from already-validated 64-byte keypair material.
+    fn from_validated_bytes(bytes: [u8; 64]) -> Self {
+        Self {
+            keypair_bytes: Zeroizing::new(bytes),
+        }
+    }
+
+    /// Reconstruct the `Keypair` for signing operations.
+    ///
+    /// The keypair is built lazily from the zeroizing-on-drop byte buffer
+    /// each time it's needed. The transient `Keypair` will be dropped at
+    /// the end of the calling expression — `solana_sdk::Keypair` does not
+    /// guarantee zeroization, so callers should keep its lifetime short.
+    fn keypair_inner(&self) -> Keypair {
+        // SAFETY: `keypair_bytes` is only ever populated through code paths
+        // that have already validated the buffer is a well-formed Ed25519
+        // keypair, so `try_from` cannot fail here.
+        Keypair::try_from(&self.keypair_bytes[..])
+            .expect("Wallet keypair bytes are validated at construction time")
+    }
+
     /// Create a new wallet with a fresh keypair, returning the wallet
     /// and its 12-word BIP39 mnemonic for backup.
     ///
@@ -35,9 +63,9 @@ impl Wallet {
         let kp_bytes = keypair_bytes_from_seed(&seed);
         // SAFETY: `keypair_bytes_from_seed` always returns a valid 64-byte
         // Ed25519 keypair derived from a well-formed BIP39 seed.
-        let keypair = Keypair::try_from(kp_bytes.as_slice())
+        Keypair::try_from(kp_bytes.as_slice())
             .expect("keypair from valid seed should not fail");
-        (Self { keypair }, phrase)
+        (Self::from_validated_bytes(kp_bytes), phrase)
     }
 
     /// Restore a wallet from a BIP39 mnemonic phrase.
@@ -51,9 +79,9 @@ impl Wallet {
             .map_err(|e: bip39::Error| WalletError::InvalidMnemonic(e.to_string()))?;
         let seed = mnemonic.to_seed("");
         let kp_bytes = keypair_bytes_from_seed(&seed);
-        let keypair = Keypair::try_from(kp_bytes.as_slice())
+        Keypair::try_from(kp_bytes.as_slice())
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
-        Ok(Self { keypair })
+        Ok(Self::from_validated_bytes(kp_bytes))
     }
 
     /// Import a wallet from a base58-encoded 64-byte keypair.
@@ -66,9 +94,7 @@ impl Wallet {
         let bytes = bs58::decode(b58)
             .into_vec()
             .map_err(|e| WalletError::InvalidKeypair(e.to_string()))?;
-        let keypair = Keypair::try_from(bytes.as_slice())
-            .map_err(|e| WalletError::InvalidKeypair(e.to_string()))?;
-        Ok(Self { keypair })
+        Self::from_keypair_bytes(&bytes)
     }
 
     /// Import a wallet from raw keypair bytes (64 bytes: 32 secret + 32 public).
@@ -80,9 +106,13 @@ impl Wallet {
     ///
     /// Returns `WalletError::InvalidKeypair` if the bytes are not a valid Ed25519 keypair.
     pub fn from_keypair_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
-        let keypair =
-            Keypair::try_from(bytes).map_err(|e| WalletError::InvalidKeypair(e.to_string()))?;
-        Ok(Self { keypair })
+        // Validate as a real keypair first so we never store junk.
+        Keypair::try_from(bytes).map_err(|e| WalletError::InvalidKeypair(e.to_string()))?;
+
+        let fixed: [u8; 64] = bytes
+            .try_into()
+            .map_err(|_| WalletError::InvalidKeypair("expected exactly 64 bytes".to_string()))?;
+        Ok(Self::from_validated_bytes(fixed))
     }
 
     /// Import a wallet from an environment variable containing a base58 keypair.
@@ -99,19 +129,23 @@ impl Wallet {
     /// Returns the base58 public key address of this wallet.
     #[must_use]
     pub fn address(&self) -> String {
-        self.keypair.pubkey().to_string()
+        self.pubkey().to_string()
     }
 
     /// Returns the Solana `Pubkey` of this wallet.
+    ///
+    /// The public key occupies bytes 32..64 of the stored keypair.
     #[must_use]
     pub fn pubkey(&self) -> Pubkey {
-        self.keypair.pubkey()
+        let mut public = [0u8; 32];
+        public.copy_from_slice(&self.keypair_bytes[32..]);
+        Pubkey::from(public)
     }
 
     /// Sign a message, returning a Solana `Signature`.
     #[allow(dead_code)] // used in tests only; reserved for future message-signing API
     pub(crate) fn sign(&self, message: &[u8]) -> Signature {
-        self.keypair.sign_message(message)
+        self.keypair_inner().sign_message(message)
     }
 
     /// Return the raw 64-byte keypair (secret || public) for serialization.
@@ -119,7 +153,7 @@ impl Wallet {
     /// The caller is responsible for zeroizing the returned bytes when done.
     #[must_use]
     pub fn to_keypair_bytes(&self) -> [u8; 64] {
-        self.keypair.to_bytes()
+        *self.keypair_bytes
     }
 
     /// Return the keypair as a base58-encoded string.
@@ -127,12 +161,16 @@ impl Wallet {
     /// The caller is responsible for zeroizing the returned string when done.
     #[must_use]
     pub fn to_keypair_b58(&self) -> String {
-        bs58::encode(self.keypair.to_bytes()).into_string()
+        bs58::encode(*self.keypair_bytes).into_string()
     }
 
     /// Access the inner keypair for transaction signing.
-    pub(crate) fn keypair(&self) -> &Keypair {
-        &self.keypair
+    ///
+    /// Returns an owned `Keypair` reconstructed from the zeroizing buffer.
+    /// `solana_sdk::Keypair` itself does not zero on drop, so callers should
+    /// keep the returned value's scope as small as possible.
+    pub(crate) fn keypair(&self) -> Keypair {
+        self.keypair_inner()
     }
 }
 
@@ -142,17 +180,9 @@ impl fmt::Debug for Wallet {
     }
 }
 
-impl Drop for Wallet {
-    fn drop(&mut self) {
-        // Best-effort zeroization: solana_sdk::Keypair does not expose its
-        // internal bytes by mutable reference, so we cannot guarantee the
-        // secret key material is zeroed in-place. This zeroizes a copy of
-        // the bytes on the stack. For stronger guarantees, store raw key
-        // bytes in a Zeroizing<[u8; 64]> and reconstruct Keypair on demand.
-        let mut bytes = self.keypair.to_bytes();
-        bytes.zeroize();
-    }
-}
+// `Drop` is intentionally not implemented: `keypair_bytes` is wrapped in
+// `zeroize::Zeroizing`, which performs in-place zeroization of the actual
+// stored buffer when the wallet is dropped (MEDIUM-1).
 
 /// Derive a 64-byte keypair (secret || public) from the first 32 bytes of a BIP39 seed.
 fn keypair_bytes_from_seed(seed: &[u8]) -> [u8; 64] {

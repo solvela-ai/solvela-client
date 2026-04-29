@@ -112,7 +112,10 @@ pub(crate) async fn sign_exact_payment(
     let blockhash = get_latest_blockhash(rpc_url, http).await?;
 
     let message = Message::new(&[ix], Some(&wallet.pubkey()));
-    let tx = Transaction::new(&[wallet.keypair()], message, blockhash);
+    // Bind the reconstructed `Keypair` to a local so the borrow lasts
+    // for the `Transaction::new` call.
+    let signing_kp = wallet.keypair();
+    let tx = Transaction::new(&[&signing_kp], message, blockhash);
 
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| SignerError::TransactionBuild(format!("serialize: {e}")))?;

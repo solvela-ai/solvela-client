@@ -11,6 +11,6 @@ pub mod wallet;
 
 pub use balance::BalanceMonitor;
 pub use client::SolvelaClient;
-pub use config::{ClientBuilder, ClientConfig};
+pub use config::{ClientBuilder, ClientConfig, DEFAULT_MAX_PAYMENT_AMOUNT_ATOMIC};
 pub use error::{ClientError, SignerError, WalletError};
 pub use wallet::Wallet;

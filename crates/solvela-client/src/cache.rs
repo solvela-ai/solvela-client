@@ -1,9 +1,9 @@
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use ahash::AHasher;
 use lru::LruCache;
 use solvela_protocol::{ChatMessage, ChatResponse};
 
@@ -42,7 +42,10 @@ impl ResponseCache {
     }
 
     pub(crate) fn cache_key(model: &str, messages: &[ChatMessage]) -> u64 {
-        let mut hasher = DefaultHasher::new();
+        // MEDIUM-2: use AHash explicitly for stable, deterministic cache keys.
+        // `std::collections::hash_map::DefaultHasher` is randomized per-process
+        // and slower than necessary for non-cryptographic in-memory keys.
+        let mut hasher = AHasher::default();
         model.hash(&mut hasher);
         for msg in messages {
             // Hash role as its serialized form for consistency

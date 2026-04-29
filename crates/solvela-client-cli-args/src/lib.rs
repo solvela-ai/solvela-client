@@ -155,8 +155,22 @@ pub fn save_wallet(path: &str, keypair_bytes: &[u8], force: bool) -> Result<Path
 
     #[cfg(not(unix))]
     {
+        // MEDIUM-3: on non-Unix (Windows in particular) we cannot enforce
+        // 0600-equivalent ACLs without pulling in extra dependencies. Warn
+        // loudly so operators know the wallet file is created with whatever
+        // default ACL the platform applies (typically inherited from the
+        // parent directory and potentially world-readable on shared hosts).
+        // TODO: implement proper Windows ACL hardening via the
+        // `windows-permissions` crate or `OpenOptionsExt::access_mode` so
+        // the file is restricted to the current user only. See audit
+        // finding MEDIUM-3.
         std::fs::write(&expanded, &json)
             .map_err(|e| format!("failed to write {}: {e}", expanded.display()))?;
+        tracing::warn!(
+            path = %expanded.display(),
+            "wallet file created without owner-only ACL on non-Unix platform; \
+             treat the file location as sensitive (MEDIUM-3)"
+        );
     }
 
     Ok(expanded)
