@@ -1,0 +1,96 @@
+# Publish all four workspace crates to crates.io on v* tag push.
+#
+# Topological order: solvela-client → solvela-client-cli-args →
+#   { solvela-client-cli, solvela-client-proxy }.
+# 60s sleeps between dependents handle the sparse-index propagation lag
+# and the implicit "1 new crate per minute" account rate limit.
+#
+# Required repo secret:
+#   CARGO_REGISTRY_TOKEN — generated at https://crates.io/settings/tokens
+#                          with scopes: publish-new + publish-update,
+#                          crates filter: solvela-client*
+name: Publish to crates.io
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # needed for `gh release create`
+
+jobs:
+  publish:
+    name: Publish workspace crates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # Dry-run all four — fails fast before spending any publish slots
+      - name: Dry-run all crates
+        run: |
+          cargo publish --dry-run -p solvela-client
+          cargo publish --dry-run -p solvela-client-cli-args
+          cargo publish --dry-run -p solvela-client-cli
+          cargo publish --dry-run -p solvela-client-proxy
+
+      - name: Publish solvela-client
+        run: cargo publish -p solvela-client
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for sparse-index propagation
+        run: sleep 60
+
+      - name: Publish solvela-client-cli-args
+        run: cargo publish -p solvela-client-cli-args
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for sparse-index propagation
+        run: sleep 60
+
+      - name: Publish solvela-client-cli
+        run: cargo publish -p solvela-client-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for sparse-index propagation
+        run: sleep 60
+
+      - name: Publish solvela-client-proxy
+        run: cargo publish -p solvela-client-proxy
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Create GitHub Release
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --notes "## Published crates at $TAG
+          - [solvela-client](https://crates.io/crates/solvela-client)
+          - [solvela-client-cli-args](https://crates.io/crates/solvela-client-cli-args)
+          - [solvela-client-cli](https://crates.io/crates/solvela-client-cli)
+          - [solvela-client-proxy](https://crates.io/crates/solvela-client-proxy)" \
+            --verify-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
