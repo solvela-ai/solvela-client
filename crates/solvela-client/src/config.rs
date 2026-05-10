@@ -43,12 +43,12 @@ impl Default for ClientConfig {
             gateway_url: "http://localhost:8402".to_string(),
             rpc_url: "https://api.mainnet-beta.solana.com".to_string(),
             prefer_escrow: false,
-            timeout: Duration::from_secs(180),
+            timeout: Duration::from_mins(3),
             expected_recipient: None,
             max_payment_amount: None,
             enable_cache: false,
             enable_sessions: false,
-            session_ttl: Duration::from_secs(30 * 60),
+            session_ttl: Duration::from_mins(30),
             enable_quality_check: false,
             max_quality_retries: 1,
             free_fallback_model: None,
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(config.gateway_url, "http://localhost:8402");
         assert_eq!(config.rpc_url, "https://api.mainnet-beta.solana.com");
         assert!(!config.prefer_escrow);
-        assert_eq!(config.timeout, Duration::from_secs(180));
+        assert_eq!(config.timeout, Duration::from_mins(3));
     }
 
     #[test]
@@ -221,13 +221,13 @@ mod tests {
             .gateway_url("https://my-gateway.fly.dev")
             .rpc_url("https://my-rpc.com")
             .prefer_escrow(false)
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_mins(1))
             .build_config();
 
         assert_eq!(config.gateway_url, "https://my-gateway.fly.dev");
         assert_eq!(config.rpc_url, "https://my-rpc.com");
         assert!(!config.prefer_escrow);
-        assert_eq!(config.timeout, Duration::from_secs(60));
+        assert_eq!(config.timeout, Duration::from_mins(1));
     }
 
     #[test]
@@ -269,7 +269,7 @@ mod tests {
         let config = ClientConfig::default();
         assert!(!config.enable_cache);
         assert!(!config.enable_sessions);
-        assert_eq!(config.session_ttl, Duration::from_secs(30 * 60));
+        assert_eq!(config.session_ttl, Duration::from_mins(30));
         assert!(!config.enable_quality_check);
         assert_eq!(config.max_quality_retries, 1);
         assert!(config.free_fallback_model.is_none());
@@ -285,10 +285,10 @@ mod tests {
     fn test_builder_enable_sessions_with_ttl() {
         let config = ClientBuilder::new()
             .enable_sessions(true)
-            .session_ttl(Duration::from_secs(600))
+            .session_ttl(Duration::from_mins(10))
             .build_config();
         assert!(config.enable_sessions);
-        assert_eq!(config.session_ttl, Duration::from_secs(600));
+        assert_eq!(config.session_ttl, Duration::from_mins(10));
     }
 
     #[test]
