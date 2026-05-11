@@ -44,7 +44,7 @@ pub struct RpcArgs {
 #[must_use]
 pub fn expand_home(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
-        match dirs_next::home_dir() {
+        match dirs::home_dir() {
             Some(home) => home.join(rest),
             None => PathBuf::from(path),
         }
