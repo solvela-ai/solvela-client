@@ -138,7 +138,7 @@ mod tests {
 
     #[tokio::test]
     async fn new_session_returns_default_model() {
-        let store = SessionStore::new(Duration::from_secs(60));
+        let store = SessionStore::new(Duration::from_mins(1));
         let info = store.get_or_create("sess-1", "gpt-4o").await;
         assert_eq!(info.model, "gpt-4o");
         assert!(!info.escalated);
@@ -146,7 +146,7 @@ mod tests {
 
     #[tokio::test]
     async fn existing_session_returns_stored_model() {
-        let store = SessionStore::new(Duration::from_secs(60));
+        let store = SessionStore::new(Duration::from_mins(1));
         store.get_or_create("sess-1", "gpt-4o").await;
 
         // Second call with different default should still return original model
@@ -167,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn three_strike_sets_escalated() {
-        let store = SessionStore::new(Duration::from_secs(60));
+        let store = SessionStore::new(Duration::from_mins(1));
         store.get_or_create("sess-1", "gpt-4o").await;
 
         let same_hash = 42;
@@ -181,7 +181,7 @@ mod tests {
 
     #[tokio::test]
     async fn less_than_three_identical_does_not_escalate() {
-        let store = SessionStore::new(Duration::from_secs(60));
+        let store = SessionStore::new(Duration::from_mins(1));
         store.get_or_create("sess-1", "gpt-4o").await;
 
         store.record_request("sess-1", 42).await;

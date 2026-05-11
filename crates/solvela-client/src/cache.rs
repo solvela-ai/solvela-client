@@ -159,8 +159,7 @@ mod tests {
 
     #[test]
     fn lru_eviction() {
-        let cache =
-            ResponseCache::with_config(3, Duration::from_secs(60), Duration::from_millis(0));
+        let cache = ResponseCache::with_config(3, Duration::from_mins(1), Duration::from_millis(0));
         cache.put(1, make_response("a"));
         cache.put(2, make_response("b"));
         cache.put(3, make_response("c"));
@@ -175,8 +174,7 @@ mod tests {
 
     #[test]
     fn dedup_window_prevents_update() {
-        let cache =
-            ResponseCache::with_config(10, Duration::from_secs(60), Duration::from_secs(60));
+        let cache = ResponseCache::with_config(10, Duration::from_mins(1), Duration::from_mins(1));
         let key = 99;
         cache.put(key, make_response("first"));
         cache.put(key, make_response("second"));
@@ -187,7 +185,7 @@ mod tests {
     #[test]
     fn dedup_window_expires_allows_update() {
         let cache =
-            ResponseCache::with_config(10, Duration::from_secs(60), Duration::from_millis(1));
+            ResponseCache::with_config(10, Duration::from_mins(1), Duration::from_millis(1));
         let key = 99;
         cache.put(key, make_response("first"));
         std::thread::sleep(Duration::from_millis(5));
