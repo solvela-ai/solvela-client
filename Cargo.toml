@@ -26,8 +26,8 @@ solana-sdk = "~4.0"
 spl-token = "9"
 
 # HTTP
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
-reqwest-eventsource = "0.6"
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "webpki-roots"] }
+eventsource-stream = "0.2"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
