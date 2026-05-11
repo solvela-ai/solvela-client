@@ -108,7 +108,7 @@ async fn main() {
     };
 
     let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_mins(2))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 

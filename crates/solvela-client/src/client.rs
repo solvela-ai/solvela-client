@@ -107,7 +107,7 @@ impl SolvelaClient {
                 false
             } else if balance_atomic == 0 {
                 warn!(fallback_model = %fallback_model, "using free fallback (zero balance)");
-                effective_req.model = fallback_model.clone();
+                effective_req.model.clone_from(fallback_model);
                 true
             } else {
                 false
@@ -327,7 +327,7 @@ impl SolvelaClient {
                 false
             } else if balance_atomic == 0 {
                 warn!(fallback_model = %fallback_model, "using free fallback (zero balance)");
-                effective_req.model = fallback_model.clone();
+                effective_req.model.clone_from(fallback_model);
                 true
             } else {
                 false
