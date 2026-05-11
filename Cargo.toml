@@ -23,9 +23,7 @@ solvela-protocol = "0.1"
 
 # Solana
 solana-sdk = "2.2"
-solana-client = "2.2"
 spl-token = "7"
-spl-associated-token-account = "5"
 
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
@@ -65,7 +63,7 @@ thiserror = "2"
 # Security
 zeroize = "1"
 dirs-next = "2"
-lru = "0.12"
+lru = "0.18"
 
 # Hashing — stable, deterministic, fast (used for cache keys / session digests).
 # DefaultHasher is randomized per-process and SipHash is slower than necessary
