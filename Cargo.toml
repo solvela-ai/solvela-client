@@ -22,8 +22,8 @@ keywords = ["solana", "x402", "usdc", "payments", "llm"]
 solvela-protocol = "0.1"
 
 # Solana
-solana-sdk = "2.2"
-spl-token = "7"
+solana-sdk = "~4.0"
+spl-token = "9"
 
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
