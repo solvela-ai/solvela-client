@@ -62,7 +62,7 @@ thiserror = "2"
 
 # Security
 zeroize = "1"
-dirs-next = "2"
+dirs = "6"
 lru = "0.18"
 
 # Hashing — stable, deterministic, fast (used for cache keys / session digests).
