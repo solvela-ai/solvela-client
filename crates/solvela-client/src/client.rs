@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use ahash::AHasher;
+use eventsource_stream::Eventsource;
 use futures::stream::{self, Stream, StreamExt};
 use reqwest::StatusCode;
-use reqwest_eventsource::RequestBuilderExt;
 use solana_sdk::pubkey::Pubkey;
 use tracing::{debug, warn};
 
@@ -391,37 +391,35 @@ impl SolvelaClient {
             }
         };
 
-        let es = request_builder
-            .eventsource()
-            .map_err(|e| ClientError::StreamError(format!("failed to create SSE stream: {e}")))?;
+        let stream_resp = request_builder.send().await?;
+        let stream_status = stream_resp.status();
+        if !stream_status.is_success() {
+            let body = stream_resp.text().await.unwrap_or_default();
+            return Err(ClientError::Gateway {
+                status: stream_status.as_u16(),
+                message: body,
+            });
+        }
+
+        let es = stream_resp.bytes_stream().eventsource();
 
         let stream = stream::unfold(es, |mut es| async move {
-            use reqwest_eventsource::Event;
-
-            loop {
-                match es.next().await {
-                    Some(Ok(Event::Open)) => {}
-                    Some(Ok(Event::Message(msg))) => {
-                        let data = msg.data.trim();
-                        if data == "[DONE]" {
-                            es.close();
-                            return None;
-                        }
-                        let result: Result<ChatChunk, ClientError> = serde_json::from_str(data)
-                            .map_err(|e| {
-                                ClientError::StreamError(format!("failed to parse SSE chunk: {e}"))
-                            });
-                        return Some((result, es));
+            match es.next().await {
+                Some(Ok(event)) => {
+                    let data = event.data.trim();
+                    if data == "[DONE]" {
+                        return None;
                     }
-                    Some(Err(e)) => {
-                        es.close();
-                        return Some((
-                            Err(ClientError::StreamError(format!("SSE error: {e}"))),
-                            es,
-                        ));
-                    }
-                    None => return None,
+                    let result: Result<ChatChunk, ClientError> = serde_json::from_str(data)
+                        .map_err(|e| {
+                            ClientError::StreamError(format!("failed to parse SSE chunk: {e}"))
+                        });
+                    Some((result, es))
                 }
+                Some(Err(e)) => {
+                    Some((Err(ClientError::StreamError(format!("SSE error: {e}"))), es))
+                }
+                None => None,
             }
         });
 
