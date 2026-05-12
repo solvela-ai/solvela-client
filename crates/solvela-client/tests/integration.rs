@@ -360,3 +360,143 @@ async fn test_amount_exceeds_max_rejected() {
         "expected AmountExceedsMax error"
     );
 }
+
+// Wire-format guards.
+//
+// Assert that `solvela-protocol` wire types serialize to snake_case JSON keys
+// and NOT camelCase, plus that to_string -> from_str -> to_string is identity.
+// Guards against silent drift between protocol type definitions and the wire
+// format every sibling SDK and the gateway are built against.
+//
+// Upstream docs disagree with the code about the default casing — see
+// solvela-ai/solvela#223. If that issue is resolved by changing the wire
+// format to camelCase (rather than the docs), these tests will fail loudly
+// and force a coordinated SDK update instead of a silent break.
+mod wire_format {
+    use super::*;
+
+    fn assert_keys(json: &str, present_snake: &[&str], absent_camel: &[&str]) {
+        for k in present_snake {
+            let needle = format!("\"{k}\"");
+            assert!(
+                json.contains(&needle),
+                "expected snake_case key {k:?} in JSON: {json}"
+            );
+        }
+        for k in absent_camel {
+            let needle = format!("\"{k}\"");
+            assert!(
+                !json.contains(&needle),
+                "unexpected camelCase key {k:?} in JSON: {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn payment_required_emits_snake_case() {
+        let json = serde_json::to_string(&sample_payment_required()).unwrap();
+        assert_keys(
+            &json,
+            &[
+                "x402_version",
+                "cost_breakdown",
+                "pay_to",
+                "max_timeout_seconds",
+                "provider_cost",
+                "platform_fee",
+                "fee_percent",
+            ],
+            &[
+                "x402Version",
+                "costBreakdown",
+                "payTo",
+                "maxTimeoutSeconds",
+                "providerCost",
+                "platformFee",
+                "feePercent",
+            ],
+        );
+    }
+
+    #[test]
+    fn payment_required_round_trip_is_identity() {
+        let once = serde_json::to_string(&sample_payment_required()).unwrap();
+        let back: PaymentRequired = serde_json::from_str(&once).unwrap();
+        let twice = serde_json::to_string(&back).unwrap();
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn model_info_emits_snake_case() {
+        let m = ModelInfo {
+            id: "openai/gpt-4o".to_string(),
+            provider: "openai".to_string(),
+            model_id: "gpt-4o".to_string(),
+            display_name: "GPT-4o".to_string(),
+            input_cost_per_million: 2.5,
+            output_cost_per_million: 10.0,
+            context_window: 128_000,
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: true,
+            reasoning: false,
+            supports_structured_output: true,
+            supports_batch: false,
+            max_output_tokens: Some(16384),
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert_keys(
+            &json,
+            &[
+                "model_id",
+                "display_name",
+                "input_cost_per_million",
+                "output_cost_per_million",
+                "context_window",
+                "supports_streaming",
+                "supports_tools",
+                "supports_vision",
+                "supports_structured_output",
+                "supports_batch",
+                "max_output_tokens",
+            ],
+            &[
+                "modelId",
+                "displayName",
+                "inputCostPerMillion",
+                "outputCostPerMillion",
+                "contextWindow",
+                "supportsStreaming",
+                "supportsTools",
+                "supportsVision",
+                "supportsStructuredOutput",
+                "supportsBatch",
+                "maxOutputTokens",
+            ],
+        );
+    }
+
+    #[test]
+    fn model_info_round_trip_is_identity() {
+        let m = ModelInfo {
+            id: "openai/gpt-4o".to_string(),
+            provider: "openai".to_string(),
+            model_id: "gpt-4o".to_string(),
+            display_name: "GPT-4o".to_string(),
+            input_cost_per_million: 2.5,
+            output_cost_per_million: 10.0,
+            context_window: 128_000,
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: true,
+            reasoning: false,
+            supports_structured_output: true,
+            supports_batch: false,
+            max_output_tokens: Some(16384),
+        };
+        let once = serde_json::to_string(&m).unwrap();
+        let back: ModelInfo = serde_json::from_str(&once).unwrap();
+        let twice = serde_json::to_string(&back).unwrap();
+        assert_eq!(once, twice);
+    }
+}
