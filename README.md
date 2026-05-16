@@ -1,28 +1,24 @@
 # solvela-client
 
-Rust client SDK for [Solvela](https://solvela.ai) — Solana-native AI agent payment gateway.
+> **This SDK has moved.** Source now lives in the Solvela monorepo:
+> https://github.com/solvela-ai/solvela/tree/main/sdks/rust
 
-This workspace holds the client-side primitives that pair with the [`solvela`](https://github.com/solvela-ai/solvela) gateway:
+**Install (unchanged):**
 
-| Crate | Purpose |
-|---|---|
-| `solvela-client` | Library: wallet management, x402 payment signing, payload assembly |
-| `solvela-client-cli` | CLI binary that uses the library |
-| `solvela-client-cli-args` | Shared argument parsing for the CLI |
-| `solvela-client-proxy` | Local HTTP proxy that signs payments on behalf of unmodified OpenAI-format clients |
+```bash
+cargo install solvela-client-cli         # agent-side payer CLI
+cargo install solvela-client-proxy       # localhost x402-signing reverse proxy
+```
 
-## When to use which crate
+Library users:
 
-- **You're building an agent in Rust** → depend on `solvela-client` directly. Sign and send payments yourself.
-- **You want a command-line tool** → install `solvela-client-cli` (planned: `cargo install solvela-client-cli`).
-- **You have a tool that speaks OpenAI HTTP and you want it to pay automatically** → run `solvela-client-proxy` as a sidecar; point your tool at `http://localhost:<port>` and the proxy signs and forwards.
+```toml
+[dependencies]
+solvela-client = "0.2"
+```
 
-> **Different from `solvela-cli`**: the [`solvela-cli`](https://github.com/solvela-ai/solvela) (in the main monorepo) is the operator/dev CLI for talking to a Solvela gateway. `solvela-client-cli` here is the agent-side payer CLI. They serve different purposes and may merge in the future.
+The crates.io package names — `solvela-client`, `solvela-client-cli`, `solvela-client-cli-args`, `solvela-client-proxy` — are preserved. Existing installs and `Cargo.toml` pins continue to work without changes.
 
-## Status
+Issues, PRs, and discussion: https://github.com/solvela-ai/solvela/issues
 
-Pre-1.0. APIs may shift. The protocol it implements is [x402](https://www.x402.org/) on Solana with USDC-SPL settlement; that part is stable.
-
-## License
-
-[MIT](./LICENSE).
+The monorepo's `sdks/rust/` is byte-equivalent to this repo's `main` at archive time, with `Cargo.toml` `repository` rewritten to point at the monorepo and `solvela-protocol` re-linked as a local path dep so wire-format drift between gateway and SDK fails CI in the same PR. See [PR #316](https://github.com/solvela-ai/solvela/pull/316) for the consolidation diff.
